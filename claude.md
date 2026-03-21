@@ -50,6 +50,7 @@ PILOT uses 5 specialized agents that communicate through a central **Agent Orche
 **Role:** Central coordinator. Receives the user's voice request, manages the agent loop, tracks task state, handles errors, and decides when the task is complete.
 
 **Where it runs:** FastAPI server on Mac M3
+*(Runs a Railtracks-style deterministic pipeline to sequence tasks and manage retries/branches)*
 
 **What it manages:**
 - The current task and its high-level plan (from Agent 2)
@@ -68,18 +69,18 @@ IDLE → LISTENING → PLANNING → EXECUTING → VERIFYING → EXECUTING → ..
 **Orchestrator loop (pseudocode):**
 ```
 1. Receive voice transcription from phone
-2. Send to PLANNER (Agent 2) → get back a step-by-step plan
+2. Send to PLANNER (Agent 2) → get back a canonical plan + extracted info
 3. For each step in the plan:
-   a. Ask EYES (Agent 1) to read the current screen
-   b. Send screen state + current step to ACTOR (Agent 3)
-   c. ACTOR returns an action (tap/type/scroll)
-   d. Phone executes the action
-   e. Wait 1-2 seconds for screen to update
-   f. Ask EYES (Agent 1) to read the NEW screen
-   g. Send old screen + new screen + expected outcome to VERIFIER (Agent 4)
-   h. If VERIFIER says success → move to next step
-   i. If VERIFIER says failed → retry (max 3 times) or ask user
-   j. Update VOICE (Agent 5) with status text for the glow border
+  a. Ask EYES (Deterministic Node) to read and normalize the current screen
+  b. Call the deterministic ACTOR (server-side function) with the normalized UI + step + history
+  c. If actor returns `need_vision` or `need_llm`, call the vision/LLM fallback
+  d. Send chosen action to the phone to execute
+  e. Wait 1-2 seconds for screen to update (or a `wait` action returned by actor)
+  f. Ask EYES to read the NEW screen
+  g. Call VERIFIER (deterministic comparator, LLM fallback if ambiguous)
+  h. If VERIFIER says success → move to next step
+  i. If VERIFIER says failed → retry deterministic alternatives (scroll/back/wait) or escalate to LLM/user after max retries
+  j. Update VOICE (Agent 5) with status text for the glow border
 4. When all steps done, VOICE (Agent 5) announces completion
 ```
 
@@ -87,70 +88,44 @@ IDLE → LISTENING → PLANNING → EXECUTING → VERIFYING → EXECUTING → ..
 
 ### Agent 1: The Eyes (Phone-Side)
 
-**Role:** Reads the phone screen. Extracts the complete UI element tree via Android Accessibility Service. Optionally captures a screenshot for vision analysis.
+**Role:** Deterministic screen reader and normalizer. The Eyes node is a phone-side Accessibility Service that returns a canonical, normalized UI schema for server-side deterministic tools and LLM fallbacks.
 
-**Where it runs:** On the Samsung S25+ as an Android Accessibility Service
+**Where it runs:** On the Samsung S25+ as an Android Accessibility Service (phone-side), but it also includes a deterministic normalization step (either on-device or on-server) to produce a compact UI schema.
 
 **What it does:**
-- Traverses the Accessibility node tree from `getRootInActiveWindow()`
-- For EVERY element on screen, extracts:
-  - `element_id` (generated, sequential)
-  - `className` (Button, EditText, TextView, ImageView, etc.)
+- Traverses the Accessibility node tree from `getRootInActiveWindow()` and filters/normalizes nodes deterministically.
+- For EVERY relevant element on screen, extracts a canonical set of fields:
+  - `id` (sequential element id assigned by Eyes)
+  - `class` (Button, EditText, TextView, ImageView, etc.)
   - `text` (visible text content)
-  - `contentDescription` (accessibility label, especially for icons)
-  - `bounds` (screen coordinates: left, top, right, bottom)
-  - `isClickable`, `isScrollable`, `isEditable`, `isChecked`
-  - `viewIdResourceName` (the developer's XML ID, e.g. "com.uber:id/destination_input")
-  - `packageName` (which app is in foreground, e.g. "com.ubercab")
-- Builds a structured JSON representation of the screen
-- Optionally captures screenshot as JPEG (compressed, ~100KB) for vision fallback
+  - `hint` / placeholder
+  - `content_desc` (accessibility label)
+  - `resource_id` (viewIdResourceName)
+  - `bounds` (left, top, right, bottom)
+  - `clickable`, `scrollable`, `editable`, `checked`
+  - `package`, `activity`
+- Optionally captures a screenshot (JPEG base64) only when requested (vision fallback or debugging).
 
-**Output format (sent to server):**
+**Normalization & filtering rules (deterministic):**
+- Recursively traverse children and drop invisible or zero-sized nodes.
+- Remove purely decorative nodes (dividers/spacers) deterministically.
+- Limit to the top ~100 relevant elements ordered by visibility and interactive affordance.
+- Produce a tokenized `label` field (lowercased, punctuation stripped) to aid deterministic matching.
+
+**Output (canonical UI schema):**
 ```json
 {
   "package": "com.ubercab",
-  "activity": "com.ubercab.rider.app.core.root.RootActivity", 
+  "activity": "com.ubercab.rider.app.core.root.RootActivity",
   "screen_title": "Where to?",
   "timestamp": 1711036800,
-  "elements": [
-    {
-      "id": 1,
-      "class": "EditText",
-      "text": "",
-      "hint": "Where to?",
-      "content_desc": "Search destination",
-      "resource_id": "com.ubercab:id/destination_input",
-      "bounds": [24, 180, 456, 240],
-      "clickable": true,
-      "editable": true,
-      "scrollable": false
-    },
-    {
-      "id": 2,
-      "class": "TextView",
-      "text": "Dr. Patel's Office",
-      "content_desc": "Saved place",
-      "bounds": [24, 280, 456, 320],
-      "clickable": true
-    },
-    {
-      "id": 3,
-      "class": "Button",
-      "text": "Confirm UberX",
-      "bounds": [100, 600, 380, 660],
-      "clickable": true
-    }
-  ],
-  "screenshot_b64": "optional, only when server requests it"
+  "elements": [ {"id":1, "class":"EditText", "label":"where to", "hint":"Where to?", "resource_id":"com.ubercab:id/destination_input", "bounds":[24,180,456,240], "clickable":true, "editable":true} ... ],
+  "screenshot_b64": null
 }
 ```
 
-**Key implementation notes:**
-- The tree traversal must be recursive (nodes have children)
-- Filter out invisible elements (bounds with zero width/height)
-- Filter out decorative elements (dividers, spacers with no text/action)
-- Cap at ~100 most relevant elements to keep payload small
-- The `element_id` is assigned by Agent 1, NOT Android's internal ID — it's just a sequential counter for this screen read. The Actor references these IDs.
+**Notes:**
+- Eyes is deterministic by design. The normalization step creates a single source of truth for UI matching and scoring used by the deterministic Actor and Verifier. Screenshots are an optional, on-demand path for vision-based LLMs when the normalized tree is insufficient.
 
 ---
 
@@ -235,67 +210,43 @@ Input: "Send Sarah a message saying I'll be 10 minutes late"
 
 ---
 
-### Agent 3: The Actor (LLM on Mac)
+### Agent 3: The Actor (Deterministic Server-side Node)
 
-**Role:** Given the current screen state (from Agent 1) and the current step objective (from Agent 2), decides the SINGLE next UI action to perform.
+**Role:** Deterministic decision function that, given the normalized UI schema (from Eyes) and the current step objective (from Planner), returns the single next UI action to perform. The Actor is deterministic by default and runs as a server-side Python function; LLM-driven Actor behavior is used only as an explicit fallback for ambiguous or novel states.
 
-**Where it runs:** Mac server, calls Groq API (llama-3.3-70b-versatile for text, llama-4-scout for vision fallback)
+**Where it runs:** Server-side (Mac), invoked by the Orchestrator/Railtracks pipeline as a deterministic Python tool. LLM Actor is an optional fallback call.
 
-**When it's called:** Every iteration of the agent loop — after each screen read.
+**When it's called:** Every iteration of the agent loop — after each screen read and normalization.
 
-**System prompt:**
-```
-You are PILOT's Actor. You look at the current phone screen and decide 
-the SINGLE next UI action to move toward the current objective.
+**Function contract:**
+- Signature: `decide_action(ui_schema: dict, objective: str, action_history: list) -> action: dict`
+- Action dict fields: `{ action: str, element_id?: int, value?: str, status?: str }`
 
-You receive:
-- The current step objective (e.g. "Search for Domino's restaurant")
-- The UI element tree (list of all visible elements with IDs)
-- Previous actions taken (to avoid loops)
+**Available deterministic actions:**
+1. `{"action": "tap", "element_id": N, "status": "Tapping the X"}`
+2. `{"action": "type", "element_id": N, "value": "text", "status": "Typing text"}`
+3. `{"action": "scroll_down", "status": "Scrolling down"}`
+4. `{"action": "scroll_up", "status": "Scrolling up"}`
+5. `{"action": "back", "status": "Going back"}`
+6. `{"action": "open_app", "package": "com.ubercab", "status": "Opening app"}`
+7. `{"action": "wait", "seconds": 2, "status": "Waiting for page to load"}`
+8. `{"action": "step_done", "status": "Step complete"}`
+9. `{"action": "need_user", "question": "Confirm payment?", "status": "Need user input"}`
+10. `{"action": "need_vision", "status": "Need screenshot for vision model"}`
 
-AVAILABLE ACTIONS:
-1. {"action": "tap", "element_id": N, "status": "Tapping the search button"}
-2. {"action": "type", "element_id": N, "value": "text to type", "status": "Typing the address"}
-3. {"action": "scroll_down", "status": "Scrolling down to find more options"}
-4. {"action": "scroll_up", "status": "Scrolling up"}
-5. {"action": "back", "status": "Going back to previous screen"}
-6. {"action": "open_app", "package": "com.ubercab", "status": "Opening Uber"}
-7. {"action": "wait", "seconds": 2, "status": "Waiting for page to load"}
-8. {"action": "step_done", "status": "This step's objective is complete"}
-9. {"action": "need_help", "question": "Which pizza size?", "status": "Need user input"}
-10. {"action": "need_vision", "status": "Can't determine action from text tree alone"}
+**Deterministic heuristics:**
+- If objective already appears satisfied on `ui_schema` → return `step_done`.
+- Score visible elements deterministically: exact text match > contains keywords > resource_id similarity > content_desc > clickability.
+- For typing: enforce two-step typing. Only return `type` if previous action in `action_history` was a `tap` on the same `element_id`.
+- If candidate element not visible but a scrollable parent exists → return `scroll_down`/`scroll_up` and remember scroll state to avoid loops.
+- If no candidate exceeds confidence threshold → return `need_vision` to trigger a screenshot → vision LLM.
+- If the same action was tried 3 times → switch strategy (scroll, back, wait) or escalate to LLM Actor.
 
-RULES:
-- Return EXACTLY ONE action per call
-- Always prefer elements with clear text labels over generic ones
-- If you see the objective is already achieved on screen, return "step_done"
-- If you've done the same action 3 times, try something different
-- If element_id doesn't exist in the tree, scroll to find it
-- For typing: ALWAYS tap the text field first, then type in a separate action
-- If you truly cannot determine what to do, return "need_vision" and the orchestrator will send a screenshot to the vision model
-- Keep "status" messages short (5-8 words) — they show on the user's screen
+**Fallbacks:**
+- `need_vision` triggers a screenshot and a call to a vision LLM (e.g., llama-4-scout) to get an action recommendation.
+- After N deterministic retries, call the LLM Actor with the full `ui_schema` + `action_history` for a suggested action.
 
-RESPOND WITH JSON ONLY. No other text.
-```
-
-**The Actor's decision flow:**
-```
-1. Read the objective: "Search for Domino's restaurant"
-2. Scan UI tree for relevant elements:
-   - Is there a search bar? → tap it
-   - Is there already text in search? → clear and retype
-   - Is search results showing Domino's? → tap it
-   - Is there no search visible? → scroll to find it
-3. If objective is clearly done (e.g. Domino's page is open) → "step_done"
-4. If nothing makes sense → "need_vision" (triggers screenshot + vision model)
-```
-
-**Critical: Two-step typing pattern**
-The Actor must NEVER try to tap and type in one action. Android's Accessibility API requires:
-1. First action: `{"action": "tap", "element_id": 5}` → focuses the text field
-2. Second action (next loop iteration): `{"action": "type", "element_id": 5, "value": "Domino's"}` → types the text
-
-The orchestrator must enforce this — if it gets a "type" action, check that the previous action was a "tap" on the same element.
+**Notes:** The Actor is intentionally deterministic to improve reproducibility for demos and testing. LLMs remain available as fallbacks for complex or ambiguous UI interactions.
 
 ---
 
@@ -738,3 +689,4 @@ At the end of 8 hours, the demo should show:
 9. **Glow → green flash.** Voice: "Ride booked. Arriving in 8 minutes."
 
 Total time: under 60 seconds. The audience watches the phone do everything by itself on the projector. The glowing border tells them an AI is in control. They've never seen anything like it.
+ 
