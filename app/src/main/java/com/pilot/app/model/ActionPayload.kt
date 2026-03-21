@@ -34,8 +34,23 @@ sealed class ActionPayload {
         override val status: String = ""
     ) : ActionPayload()
 
+    @Serializable @SerialName("scroll_left")
+    data class ScrollLeft(
+        override val status: String = ""
+    ) : ActionPayload()
+
+    @Serializable @SerialName("scroll_right")
+    data class ScrollRight(
+        override val status: String = ""
+    ) : ActionPayload()
+
     @Serializable @SerialName("back")
     data class Back(
+        override val status: String = ""
+    ) : ActionPayload()
+
+    @Serializable @SerialName("home")
+    data class Home(
         override val status: String = ""
     ) : ActionPayload()
 
@@ -76,7 +91,10 @@ object ActionPayloadSerializer : JsonContentPolymorphicSerializer<ActionPayload>
         "type" -> ActionPayload.Type.serializer()
         "scroll_down" -> ActionPayload.ScrollDown.serializer()
         "scroll_up" -> ActionPayload.ScrollUp.serializer()
+        "scroll_left" -> ActionPayload.ScrollLeft.serializer()
+        "scroll_right" -> ActionPayload.ScrollRight.serializer()
         "back" -> ActionPayload.Back.serializer()
+        "home" -> ActionPayload.Home.serializer()
         "open_app" -> ActionPayload.OpenApp.serializer()
         "wait" -> ActionPayload.Wait.serializer()
         "step_done" -> ActionPayload.StepDone.serializer()

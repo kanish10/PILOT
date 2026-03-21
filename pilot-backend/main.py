@@ -23,11 +23,16 @@ from core.ollama_client import OllamaClient
 # ── Logging ───────────────────────────────────────────────────────────────────
 
 logging.basicConfig(
-    level=logging.INFO,
+    level=logging.DEBUG,
     format="%(asctime)s | %(levelname)-8s | %(name)s | %(message)s",
     datefmt="%H:%M:%S",
     stream=sys.stdout,
 )
+# Quiet down noisy third-party loggers
+logging.getLogger("httpcore").setLevel(logging.WARNING)
+logging.getLogger("httpx").setLevel(logging.WARNING)
+logging.getLogger("uvicorn.access").setLevel(logging.INFO)
+logging.getLogger("groq").setLevel(logging.WARNING)
 logger = logging.getLogger(__name__)
 
 

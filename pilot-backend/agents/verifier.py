@@ -102,8 +102,14 @@ def _describe_action(action: Dict[str, Any]) -> str:
         return "Scrolled down"
     if t == "scroll_up":
         return "Scrolled up"
+    if t == "scroll_left":
+        return "Scrolled left"
+    if t == "scroll_right":
+        return "Scrolled right"
     if t == "back":
         return "Pressed back"
+    if t == "home":
+        return "Pressed home"
     if t == "open_app":
         return f"Opened app: {action.get('package', 'unknown')}"
     if t == "wait":

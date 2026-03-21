@@ -27,12 +27,36 @@ AVAILABLE ACTIONS:
 2.  {"action": "type",        "element_id": N, "value": "text",   "status": "short description"}
 3.  {"action": "scroll_down",                                      "status": "short description"}
 4.  {"action": "scroll_up",                                        "status": "short description"}
-5.  {"action": "back",                                             "status": "short description"}
-6.  {"action": "open_app",    "package": "com.example.app",       "status": "short description"}
-7.  {"action": "wait",        "seconds": 2,                       "status": "short description"}
-8.  {"action": "step_done",                                        "status": "short description"}
-9.  {"action": "need_help",   "question": "What should I do?",    "status": "short description"}
-10. {"action": "need_vision",                                      "status": "short description"}
+5.  {"action": "scroll_left",                                      "status": "short description"}
+6.  {"action": "scroll_right",                                     "status": "short description"}
+7.  {"action": "back",                                             "status": "short description"}
+8.  {"action": "home",                                             "status": "short description"}
+9.  {"action": "open_app",    "package": "com.example.app",       "status": "short description"}
+10. {"action": "wait",        "seconds": 2,                       "status": "short description"}
+11. {"action": "step_done",                                        "status": "short description"}
+12. {"action": "need_help",   "question": "What should I do?",    "status": "short description"}
+13. {"action": "need_vision",                                      "status": "short description"}
+
+WELL-KNOWN ANDROID PACKAGES (use with open_app):
+- YouTube: com.google.android.youtube
+- Chrome: com.android.chrome
+- Gmail: com.google.android.gm
+- Google Maps: com.google.android.apps.maps
+- Settings: com.android.settings
+- Instagram: com.instagram.android
+- WhatsApp: com.whatsapp
+- Spotify: com.spotify.music
+- Twitter/X: com.twitter.android
+- TikTok: com.zhiliaoapp.musically
+- Uber: com.ubercab
+- Messages: com.google.android.apps.messaging
+- Phone: com.google.android.dialer
+- Camera: com.android.camera2
+- Calendar: com.google.android.calendar
+- Clock: com.google.android.deskclock
+- Google Play Store: com.android.vending
+- Netflix: com.netflix.mediaclient
+- Snapchat: com.snapchat.android
 
 RULES:
 - Return EXACTLY ONE action as a JSON object. No explanation, no markdown.
@@ -41,7 +65,13 @@ RULES:
 - If the same action has been attempted 3+ times with no result, try something different.
 - Typing rule: ALWAYS tap the text field first (separate action), then type in the next call.
 - If a loading spinner is visible, return wait (seconds: 2).
+- If the goal is to open/launch an app, ALWAYS use "open_app" with the correct package from the list above. Do NOT navigate through the launcher manually.
+- If the current screen is not the app you need, use "open_app" to launch it directly.
+- Use "home" to get back to the launcher when that is the shortest path.
+- Use "scroll_left" / "scroll_right" for home screens, launchers, carousels, and Samsung-style app pages.
+- Folder icons on launchers may need to be tapped before their app icons become visible.
 - "status" must be 5–8 words — it shows live on the user's screen.
+- Only return "need_vision" if you truly cannot determine the action from the UI elements. Never return "need_vision" more than once in a row — if vision already failed, try a different approach (open_app, home, back, etc.).
 - If you cannot determine the action from text alone, return "need_vision".\
 """
 
@@ -84,6 +114,7 @@ class ActorAgent:
                     text_prompt=prompt,
                     screenshot_b64=screenshot_b64,
                     max_tokens=256,
+                    system_prompt=_SYSTEM_PROMPT,
                 )
                 action = extract_json(raw)
                 logger.info("Actor (vision) → %s | %s", action.get("action"), action.get("status", ""))

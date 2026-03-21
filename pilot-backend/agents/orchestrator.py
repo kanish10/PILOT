@@ -39,14 +39,17 @@ class Orchestrator:
         Create a task, plan it, and store it.
         Returns the TaskState (already saved in state_store).
         """
+        logger.info("[ORCH] start_task called with intent='%s'", user_intent)
         task = TaskState(user_intent=user_intent, status=TaskStatus.PLANNING)
         task.status_text = "Planning your task..."
         await state_store.create(task)
+        logger.debug("[ORCH] Task %s created, calling planner...", task.task_id)
 
         try:
             plan_result = await self.planner.plan(user_intent)
+            logger.debug("[ORCH] Planner raw result: %s", str(plan_result)[:500])
         except Exception as exc:
-            logger.error("Planning failed for task %s: %s", task.task_id, exc)
+            logger.error("[ORCH] Planning FAILED for task %s: %s", task.task_id, exc, exc_info=True)
             task.status = TaskStatus.ERROR
             task.glow_state = GlowState.ERROR
             task.status_text = "Failed to create a plan. Please try again."
@@ -76,7 +79,8 @@ class Orchestrator:
             "confirmation_message",
             f"Got it, I'll handle: {user_intent}",
         )
-        logger.info("Task %s started: %d steps planned", task.task_id, len(task.plan))
+        logger.info("[ORCH] Task %s started: %d steps planned, confirmation='%s'",
+                     task.task_id, len(task.plan), task.confirmation_message)
         return task
 
     # ── Screen processing (stateful) ──────────────────────────────────────────
@@ -92,7 +96,11 @@ class Orchestrator:
         Handles: pending_type_action, step_done, need_help, need_vision,
         two-step typing rule, and back-press counting.
         """
+        logger.debug("[ORCH] process_screen task=%s status=%s step=%d/%d",
+                      task.task_id, task.status.value, task.current_step_index, len(task.plan))
+
         if task.is_complete:
+            logger.info("[ORCH] Task %s already complete, returning step_done", task.task_id)
             return {
                 "action": "step_done",
                 "status": "Task already complete",
@@ -106,6 +114,8 @@ class Orchestrator:
             task.record_action(action)
             if action.get("status"):
                 task.status_text = action["status"]
+            logger.info("[ORCH] Delivering pending type action: element=%s value='%s'",
+                         action.get("element_id"), action.get("value", "")[:50])
             return action
 
         current_step = task.current_step
@@ -113,8 +123,10 @@ class Orchestrator:
             task.status = TaskStatus.DONE
             task.glow_state = GlowState.DONE
             task.status_text = "All steps complete!"
+            logger.info("[ORCH] No more steps, task %s done", task.task_id)
             return {"action": "step_done", "status": "All steps complete!", "task_complete": True}
 
+        logger.info("[ORCH] Current step: %d — '%s'", current_step.step, current_step.objective)
         task.last_ui_tree = ui_tree
 
         # Detect if we need vision mode
@@ -123,8 +135,11 @@ class Orchestrator:
             and bool(task.action_history)
             and task.action_history[-1].action == "need_vision"
         )
+        if use_vision:
+            logger.info("[ORCH] Using VISION mode for this action")
 
         try:
+            logger.debug("[ORCH] Calling actor.decide...")
             action = await self.actor.decide(
                 objective=current_step.objective,
                 ui_tree=ui_tree,
@@ -133,8 +148,9 @@ class Orchestrator:
                 use_vision=use_vision,
                 screenshot_b64=screenshot_b64,
             )
+            logger.info("[ORCH] Actor returned: %s", action)
         except Exception as exc:
-            logger.error("Actor failed for task %s: %s", task.task_id, exc)
+            logger.error("[ORCH] Actor FAILED for task %s: %s", task.task_id, exc, exc_info=True)
             task.errors.append(str(exc))
             action = {"action": "wait", "seconds": 2, "status": "Retrying..."}
 
@@ -186,7 +202,8 @@ class Orchestrator:
 
         elif action_type == "need_vision":
             task.status_text = "Looking more carefully at the screen..."
-            # Record so next call knows why there's a screenshot
+            # Record so next call can detect vision mode from action_history
+            task.record_action(action)
 
         elif action_type == "back":
             task.back_press_count += 1
@@ -353,8 +370,21 @@ class Orchestrator:
         Simplified stateless endpoint: runs Actor only and returns the next action.
         Does not require a task to exist in state_store.
         """
+        # Count consecutive need_vision at end of history to detect loops
+        consecutive_vision = 0
+        for a in reversed(action_history):
+            if a.get("action") == "need_vision":
+                consecutive_vision += 1
+            else:
+                break
+
         use_vision = screenshot_b64 is not None and bool(action_history) and \
             action_history[-1].get("action") == "need_vision"
+
+        # If vision has failed 2+ times in a row, stop trying — force text-only
+        if consecutive_vision >= 2:
+            use_vision = False
+            logger.warning("[ORCH] need_vision loop detected (%d consecutive), forcing text-only", consecutive_vision)
 
         action = await self.actor.decide(
             objective=current_step,
@@ -366,6 +396,17 @@ class Orchestrator:
         )
 
         action_type = action.get("action", "")
+
+        # Safety: if actor still returns need_vision after 2+ loops, override to need_help
+        if action_type == "need_vision" and consecutive_vision >= 2:
+            logger.warning("[ORCH] Overriding need_vision loop → need_help")
+            action = {
+                "action": "need_help",
+                "question": f"I'm having trouble with: {current_step}. Can you help?",
+                "status": "Need your guidance now",
+            }
+            action_type = "need_help"
+
         step_complete = action_type == "step_done"
         task_complete = False  # stateless: caller must track this
 

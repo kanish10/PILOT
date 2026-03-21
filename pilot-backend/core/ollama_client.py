@@ -13,6 +13,9 @@ class OllamaClient:
     The base_url comes from OLLAMA_BASE_URL in .env.
     """
 
+    # ngrok free tier shows an interstitial page unless this header is sent
+    _NGROK_HEADERS = {"ngrok-skip-browser-warning": "true"}
+
     def __init__(self, base_url: str, model: str, timeout: float = 90.0) -> None:
         self.base_url = base_url.rstrip("/")
         self.model = model
@@ -37,10 +40,14 @@ class OllamaClient:
             response = await client.post(
                 f"{self.base_url}/api/chat",
                 json=payload,
+                headers=self._NGROK_HEADERS,
             )
             response.raise_for_status()
             data = response.json()
-            content = data["message"]["content"]
+            content = data.get("message", {}).get("content", "")
+            if not content or not content.strip():
+                logger.warning("Ollama [%s] returned empty content", self.model)
+                raise ValueError("Ollama returned empty response")
             logger.debug("Ollama [%s] response: %s", self.model, content[:300])
             return content
 
@@ -48,7 +55,10 @@ class OllamaClient:
         """Ping Ollama to check it's reachable."""
         try:
             async with httpx.AsyncClient(timeout=5.0) as client:
-                r = await client.get(f"{self.base_url}/api/tags")
+                r = await client.get(
+                    f"{self.base_url}/api/tags",
+                    headers=self._NGROK_HEADERS,
+                )
                 return r.status_code == 200
         except Exception:
             return False

@@ -91,8 +91,14 @@ def format_action_history(history: List[Dict[str, Any]]) -> str:
             desc = "scroll_down"
         elif action_type == "scroll_up":
             desc = "scroll_up"
+        elif action_type == "scroll_left":
+            desc = "scroll_left"
+        elif action_type == "scroll_right":
+            desc = "scroll_right"
         elif action_type == "back":
             desc = "back"
+        elif action_type == "home":
+            desc = "home"
         elif action_type == "wait":
             desc = f"wait({action.get('seconds', 2)}s)"
         else:

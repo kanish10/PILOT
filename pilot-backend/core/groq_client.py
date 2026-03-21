@@ -88,11 +88,15 @@ class GroqLLMClient:
         text_prompt: str,
         screenshot_b64: str,
         max_tokens: int = 512,
+        system_prompt: str = "",
     ) -> str:
         """
         Chat with a vision model by including a base64-encoded JPEG screenshot.
         """
-        messages = [
+        messages = []
+        if system_prompt:
+            messages.append({"role": "system", "content": system_prompt})
+        messages.append(
             {
                 "role": "user",
                 "content": [
@@ -105,7 +109,7 @@ class GroqLLMClient:
                     },
                 ],
             }
-        ]
+        )
         return await self.chat(
             model=model,
             messages=messages,
