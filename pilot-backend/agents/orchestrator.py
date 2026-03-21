@@ -5,11 +5,11 @@ enforces the typing rule, handles retries, and manages error recovery.
 
 State machine:
   PLANNING → EXECUTING ⇄ VERIFYING → CONFIRMING → EXECUTING → DONE
-                  ↑                                              |
-                  └──────────────── retry ─────────────────────┘
+                  ↑                                    |
+                  └──────────────── retry ─────────────┘
 """
 import logging
-from typing import Any, Dict, Optional
+from typing import Any, Dict, List, Optional
 
 from agents.actor import ActorAgent
 from agents.planner import PlannerAgent
@@ -45,6 +45,19 @@ class Orchestrator:
 
         try:
             plan_result = await self.planner.plan(user_intent)
+            raw_steps = self._validate_plan_result(plan_result)
+        except ValueError as exc:
+            logger.warning("Planner returned invalid plan for task %s: %s", task.task_id, exc)
+            try:
+                plan_result = await self.planner.plan(user_intent, repair_hint=str(exc))
+                raw_steps = self._validate_plan_result(plan_result)
+            except Exception as repair_exc:
+                logger.error("Planner repair failed for task %s: %s", task.task_id, repair_exc)
+                task.status = TaskStatus.ERROR
+                task.glow_state = GlowState.ERROR
+                task.status_text = "Failed to create a valid plan. Please try again."
+                task.errors.append(str(repair_exc))
+                return task
         except Exception as exc:
             logger.error("Planning failed for task %s: %s", task.task_id, exc)
             task.status = TaskStatus.ERROR
@@ -53,8 +66,6 @@ class Orchestrator:
             task.errors.append(str(exc))
             return task
 
-        # Parse plan steps
-        raw_steps = plan_result.get("plan", [])
         task.plan = [
             PlanStep(
                 step=s.get("step", i + 1),
@@ -132,6 +143,7 @@ class Orchestrator:
                 user_intent=task.user_intent,
                 use_vision=use_vision,
                 screenshot_b64=screenshot_b64,
+                step_context=current_step.model_dump(),
             )
         except Exception as exc:
             logger.error("Actor failed for task %s: %s", task.task_id, exc)
@@ -178,7 +190,8 @@ class Orchestrator:
             action["task_complete"] = not has_more
             action["step_complete"] = True
 
-        elif action_type == "need_help":
+        elif action_type in {"need_help", "need_user"}:
+            task.record_action(action)
             task.pending_confirmation = True
             task.confirmation_message = action.get("question", "I need your help to continue.")
             task.glow_state = GlowState.LISTENING
@@ -186,9 +199,10 @@ class Orchestrator:
 
         elif action_type == "need_vision":
             task.status_text = "Looking more carefully at the screen..."
-            # Record so next call knows why there's a screenshot
+            task.record_action(action)
 
         elif action_type == "back":
+            task.record_action(action)
             task.back_press_count += 1
             if task.back_press_count >= settings.max_back_presses:
                 task.errors.append("Max back-presses reached, restarting step")
@@ -274,6 +288,7 @@ class Orchestrator:
                     ui_tree=new_screen,
                     action_history=task.recent_actions_as_dicts(5),
                     user_intent=task.user_intent,
+                    step_context=current_step.model_dump(),
                 )
                 task.record_action(next_action)
                 task.status_text = next_action.get("status", "Handling unexpected state...")
@@ -315,9 +330,21 @@ class Orchestrator:
         response: str,
     ) -> Dict[str, Any]:
         task.pending_confirmation = False
-        r = response.lower().strip()
+        r = _normalize_confirmation(response)
 
-        if r in ("no", "cancel", "stop", "abort", "quit"):
+        if r == "repeat":
+            task.pending_confirmation = True
+            task.status = TaskStatus.CONFIRMING
+            task.glow_state = GlowState.LISTENING
+            task.status_text = task.confirmation_message or "Please say yes or no."
+            return {
+                "action": "repeat",
+                "status_text": task.status_text,
+                "glow_state": GlowState.LISTENING.value,
+                "task_complete": False,
+            }
+
+        if r in ("no", "cancel", "stop"):
             task.status = TaskStatus.CANCELLED
             task.glow_state = GlowState.OFF
             task.status_text = "Stopped. The app is as you left it."
@@ -363,6 +390,7 @@ class Orchestrator:
             user_intent=user_intent,
             use_vision=use_vision,
             screenshot_b64=screenshot_b64,
+            step_context={"objective": current_step},
         )
 
         action_type = action.get("action", "")
@@ -376,6 +404,28 @@ class Orchestrator:
             "step_complete": step_complete,
             "task_complete": task_complete,
         }
+
+    def _validate_plan_result(self, plan_result: Dict[str, Any]) -> List[Dict[str, Any]]:
+        raw_steps = plan_result.get("plan")
+        if not isinstance(raw_steps, list):
+            raise ValueError("Planner response must include a list under 'plan'")
+        if not 3 <= len(raw_steps) <= 8:
+            raise ValueError("Planner must return between 3 and 8 steps")
+
+        steps: List[Dict[str, Any]] = []
+        for index, step in enumerate(raw_steps, start=1):
+            if not isinstance(step, dict):
+                raise ValueError("Each plan step must be a JSON object")
+            objective = str(step.get("objective", "")).strip()
+            app = str(step.get("app", "")).strip()
+            if not objective or not app:
+                raise ValueError("Each plan step must include non-empty 'app' and 'objective'")
+            steps.append(step)
+
+        final_objective = steps[-1]["objective"].lower()
+        if not any(keyword in final_objective for keyword in ("verify", "confirm", "review", "check")):
+            raise ValueError("The last plan step must be a verification or confirmation step")
+        return steps
 
 
 # ── Internal helpers ──────────────────────────────────────────────────────────
@@ -397,3 +447,11 @@ def _build_verify_response(
         "pending_confirmation": pending_confirmation or task.pending_confirmation,
         "confirmation_message": confirmation_message or task.confirmation_message,
     }
+
+
+def _normalize_confirmation(response: str) -> str:
+    normalized = "".join(ch for ch in response.lower().strip() if ch.isalpha() or ch.isspace())
+    token = " ".join(normalized.split())
+    if token in {"yes", "no", "stop", "cancel", "repeat"}:
+        return token
+    return "no"

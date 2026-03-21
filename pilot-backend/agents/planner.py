@@ -48,12 +48,26 @@ class PlannerAgent:
         self.groq = groq
         self.ollama = ollama
 
-    async def plan(self, user_intent: str) -> Dict[str, Any]:
+    async def plan(
+        self,
+        user_intent: str,
+        repair_hint: Optional[str] = None,
+    ) -> Dict[str, Any]:
         """Decompose *user_intent* into a structured plan dict."""
         messages = [
             {"role": "system", "content": _SYSTEM_PROMPT},
             {"role": "user", "content": user_intent},
         ]
+        if repair_hint:
+            messages.append(
+                {
+                    "role": "user",
+                    "content": (
+                        "Repair the previous plan so it satisfies the schema exactly. "
+                        f"Issue: {repair_hint}"
+                    ),
+                }
+            )
 
         try:
             raw = await self.groq.chat(

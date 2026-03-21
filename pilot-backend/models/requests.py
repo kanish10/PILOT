@@ -3,7 +3,7 @@ Pydantic models for all API request and response bodies.
 """
 from typing import Any, Dict, List, Optional
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 
 # ── /task/start ───────────────────────────────────────────────────────────────
@@ -90,7 +90,7 @@ class AgentStepRequest(BaseModel):
     current_step: str
     ui_tree: Dict[str, Any]
     screenshot_b64: Optional[str] = None
-    action_history: List[Dict[str, Any]] = []
+    action_history: List[Dict[str, Any]] = Field(default_factory=list)
 
 
 class AgentStepResponse(BaseModel):

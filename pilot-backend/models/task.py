@@ -46,11 +46,11 @@ class TaskState(BaseModel):
     task_id: str = Field(default_factory=lambda: str(uuid.uuid4())[:8])
     user_intent: str
     status: TaskStatus = TaskStatus.PLANNING
-    plan: List[PlanStep] = []
+    plan: List[PlanStep] = Field(default_factory=list)
     current_step_index: int = 0
-    info: Dict[str, Any] = {}
-    action_history: List[ActionRecord] = []
-    errors: List[str] = []
+    info: Dict[str, Any] = Field(default_factory=dict)
+    action_history: List[ActionRecord] = Field(default_factory=list)
+    errors: List[str] = Field(default_factory=list)
     total_actions: int = 0
     start_time: float = Field(default_factory=time.time)
     glow_state: GlowState = GlowState.WORKING
