@@ -125,6 +125,12 @@ class AgentLoopController(private val service: OverlayService) {
                 }
 
                 val screenState = a11y.readScreen()
+                val needsVision = taskState.actionHistory.lastOrNull()?.action == "need_vision"
+                val screenshotB64 = if (needsVision) a11y.captureScreenshotBase64() else null
+                Log.d(
+                    TAG,
+                    "Sending screen package=${screenState.packageName} elements=${screenState.elements.size} screenshot=${screenshotB64 != null}"
+                )
 
                 val recentHistory = taskState.actionHistory.takeLast(5)
                 val stepResult = apiClient.agentStep(
@@ -132,6 +138,7 @@ class AgentLoopController(private val service: OverlayService) {
                     userIntent = taskState.userIntent,
                     currentStep = currentStep.objective,
                     uiTree = screenState,
+                    screenshotB64 = screenshotB64,
                     actionHistory = recentHistory
                 )
 
@@ -177,7 +184,7 @@ class AgentLoopController(private val service: OverlayService) {
                         return
                     }
                     is ActionPayload.NeedVision -> {
-                        Log.d(TAG, "Vision fallback requested (not implemented, retrying)")
+                        Log.d(TAG, "Vision fallback requested, retrying with screenshot")
                         retries++
                     }
                     else -> {
@@ -217,7 +224,10 @@ class AgentLoopController(private val service: OverlayService) {
             is ActionPayload.Type -> a11y.executeType(action.elementId, action.value)
             is ActionPayload.ScrollDown -> a11y.executeScrollDown()
             is ActionPayload.ScrollUp -> a11y.executeScrollUp()
+            is ActionPayload.ScrollLeft -> a11y.executeScrollLeft()
+            is ActionPayload.ScrollRight -> a11y.executeScrollRight()
             is ActionPayload.Back -> a11y.executeBack()
+            is ActionPayload.Home -> a11y.executeHome()
             is ActionPayload.OpenApp -> a11y.executeOpenApp(action.packageName)
             is ActionPayload.Wait -> {
                 delay(action.seconds * 1000L)
@@ -296,7 +306,10 @@ class AgentLoopController(private val service: OverlayService) {
         is ActionPayload.Type -> "type"
         is ActionPayload.ScrollDown -> "scroll_down"
         is ActionPayload.ScrollUp -> "scroll_up"
+        is ActionPayload.ScrollLeft -> "scroll_left"
+        is ActionPayload.ScrollRight -> "scroll_right"
         is ActionPayload.Back -> "back"
+        is ActionPayload.Home -> "home"
         is ActionPayload.OpenApp -> "open_app"
         is ActionPayload.Wait -> "wait"
         is ActionPayload.StepDone -> "step_done"

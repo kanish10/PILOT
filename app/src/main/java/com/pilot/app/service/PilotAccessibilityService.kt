@@ -1,19 +1,27 @@
 package com.pilot.app.service
 
 import android.accessibilityservice.AccessibilityService
+import android.accessibilityservice.AccessibilityService.ScreenshotResult
 import android.accessibilityservice.GestureDescription
+import android.accessibilityservice.AccessibilityService.TakeScreenshotCallback
 import android.content.Intent
+import android.graphics.Bitmap
+import android.graphics.ColorSpace
 import android.graphics.Path
 import android.graphics.Rect
 import android.os.Bundle
+import android.util.Base64
 import android.util.Log
+import android.view.Display
 import android.view.accessibility.AccessibilityEvent
 import android.view.accessibility.AccessibilityNodeInfo
+import android.view.accessibility.AccessibilityWindowInfo
 import com.pilot.app.model.ScreenState
 import com.pilot.app.model.UIElement
 import com.pilot.app.util.Constants
-import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.suspendCancellableCoroutine
+import java.io.ByteArrayOutputStream
+import java.util.concurrent.Executors
 import kotlin.coroutines.resume
 
 class PilotAccessibilityService : AccessibilityService() {
@@ -24,6 +32,7 @@ class PilotAccessibilityService : AccessibilityService() {
             private set
     }
 
+    private val screenshotExecutor = Executors.newSingleThreadExecutor()
     private var nodeMap: MutableMap<Int, AccessibilityNodeInfo> = mutableMapOf()
 
     override fun onServiceConnected() {
@@ -41,6 +50,7 @@ class PilotAccessibilityService : AccessibilityService() {
     }
 
     override fun onDestroy() {
+        screenshotExecutor.shutdownNow()
         instance = null
         super.onDestroy()
     }
@@ -49,7 +59,7 @@ class PilotAccessibilityService : AccessibilityService() {
 
     fun readScreen(): ScreenState {
         nodeMap.clear()
-        val root = rootInActiveWindow ?: return emptyScreenState()
+        val root = findBestRoot() ?: return emptyScreenState()
         val elements = mutableListOf<UIElement>()
         var idCounter = 1
 
@@ -62,6 +72,7 @@ class PilotAccessibilityService : AccessibilityService() {
         root.recycle()
 
         val capped = capElements(elements)
+        Log.d(TAG, "readScreen package=$packageName title=$title elements=${capped.size}")
 
         return ScreenState(
             packageName = packageName,
@@ -154,14 +165,83 @@ class PilotAccessibilityService : AccessibilityService() {
         elements = emptyList()
     )
 
+    private fun findBestRoot(): AccessibilityNodeInfo? {
+        val ownPackage = applicationContext.packageName
+        val activeRoot = rootInActiveWindow
+        if (activeRoot != null && activeRoot.packageName?.toString() != ownPackage) {
+            return activeRoot
+        }
+        activeRoot?.recycle()
+
+        val scoredRoots = windows.mapNotNull { window ->
+            val root = window.root ?: return@mapNotNull null
+            ScoredRoot(root = root, score = scoreWindow(window, root, ownPackage))
+        }
+        if (scoredRoots.isEmpty()) {
+            return null
+        }
+
+        val best = scoredRoots.maxByOrNull { it.score } ?: return null
+        for (candidate in scoredRoots) {
+            if (candidate.root !== best.root) {
+                candidate.root.recycle()
+            }
+        }
+        return best.root
+    }
+
+    private fun scoreWindow(
+        window: AccessibilityWindowInfo,
+        root: AccessibilityNodeInfo,
+        ownPackage: String
+    ): Int {
+        val packageName = root.packageName?.toString().orEmpty()
+        val bounds = Rect().also(window::getBoundsInScreen)
+        var score = bounds.width() * bounds.height()
+
+        if (window.isActive) score += 2_000_000
+        if (window.isFocused) score += 1_000_000
+        if (window.type == AccessibilityWindowInfo.TYPE_APPLICATION) score += 500_000
+        if (packageName == ownPackage) score -= 5_000_000
+        if (packageName.startsWith("com.android.systemui")) score -= 1_000_000
+        if (packageName.isNotBlank() && packageName != "unknown") score += 100_000
+
+        return score
+    }
+
+    private data class ScoredRoot(
+        val root: AccessibilityNodeInfo,
+        val score: Int
+    )
+
     // ── Action Execution ────────────────────────────────────────────
 
-    fun executeTap(elementId: Int): Boolean {
+    suspend fun executeTap(elementId: Int): Boolean {
         val node = nodeMap[elementId] ?: run {
             Log.w(TAG, "tap: element $elementId not found in node map")
             return false
         }
-        return node.performAction(AccessibilityNodeInfo.ACTION_CLICK)
+        if (node.performAction(AccessibilityNodeInfo.ACTION_CLICK)) {
+            return true
+        }
+
+        var parent = node.parent
+        while (parent != null) {
+            if (parent.isClickable && parent.performAction(AccessibilityNodeInfo.ACTION_CLICK)) {
+                parent.recycle()
+                return true
+            }
+            val nextParent = parent.parent
+            parent.recycle()
+            parent = nextParent
+        }
+
+        val bounds = Rect()
+        node.getBoundsInScreen(bounds)
+        if (bounds.width() <= 0 || bounds.height() <= 0) {
+            return false
+        }
+        return dispatchTapGesture(bounds.centerX().toFloat(), bounds.centerY().toFloat())
     }
 
     fun executeType(elementId: Int, text: String): Boolean {
@@ -217,6 +297,81 @@ class PilotAccessibilityService : AccessibilityService() {
             endX = resources.displayMetrics.widthPixels / 2f,
             endY = resources.displayMetrics.heightPixels * 0.7f,
             durationMs = 300L
+        )
+    }
+
+    suspend fun executeScrollLeft(): Boolean {
+        return dispatchSwipeGesture(
+            startX = resources.displayMetrics.widthPixels * 0.8f,
+            startY = resources.displayMetrics.heightPixels / 2f,
+            endX = resources.displayMetrics.widthPixels * 0.2f,
+            endY = resources.displayMetrics.heightPixels / 2f,
+            durationMs = 300L
+        )
+    }
+
+    suspend fun executeScrollRight(): Boolean {
+        return dispatchSwipeGesture(
+            startX = resources.displayMetrics.widthPixels * 0.2f,
+            startY = resources.displayMetrics.heightPixels / 2f,
+            endX = resources.displayMetrics.widthPixels * 0.8f,
+            endY = resources.displayMetrics.heightPixels / 2f,
+            durationMs = 300L
+        )
+    }
+
+    suspend fun captureScreenshotBase64(): String? = suspendCancellableCoroutine { cont ->
+        takeScreenshot(
+            Display.DEFAULT_DISPLAY,
+            screenshotExecutor,
+            object : TakeScreenshotCallback {
+                override fun onSuccess(screenshot: ScreenshotResult) {
+                    try {
+                        val hardwareBuffer = screenshot.hardwareBuffer
+                        val colorSpace = screenshot.colorSpace ?: ColorSpace.get(ColorSpace.Named.SRGB)
+                        val hardwareBitmap = Bitmap.wrapHardwareBuffer(hardwareBuffer, colorSpace)
+                        hardwareBuffer.close()
+
+                        if (hardwareBitmap == null) {
+                            Log.w(TAG, "takeScreenshot returned null bitmap")
+                            if (cont.isActive) cont.resume(null)
+                            return
+                        }
+
+                        val bitmap = hardwareBitmap.copy(Bitmap.Config.ARGB_8888, false)
+                        hardwareBitmap.recycle()
+
+                        val output = ByteArrayOutputStream()
+                        bitmap.compress(
+                            Bitmap.CompressFormat.JPEG,
+                            Constants.SCREENSHOT_QUALITY,
+                            output
+                        )
+                        bitmap.recycle()
+
+                        val encoded = Base64.encodeToString(output.toByteArray(), Base64.NO_WRAP)
+                        if (cont.isActive) cont.resume(encoded)
+                    } catch (e: Exception) {
+                        Log.e(TAG, "captureScreenshotBase64 failed", e)
+                        if (cont.isActive) cont.resume(null)
+                    }
+                }
+
+                override fun onFailure(errorCode: Int) {
+                    Log.w(TAG, "takeScreenshot failed: $errorCode")
+                    if (cont.isActive) cont.resume(null)
+                }
+            }
+        )
+    }
+
+    private suspend fun dispatchTapGesture(x: Float, y: Float): Boolean {
+        return dispatchSwipeGesture(
+            startX = x,
+            startY = y,
+            endX = x,
+            endY = y,
+            durationMs = 1L
         )
     }
 

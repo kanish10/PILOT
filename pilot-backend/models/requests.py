@@ -14,7 +14,8 @@ class TaskStartRequest(BaseModel):
 
 class TaskStartResponse(BaseModel):
     task_id: str
-    plan: List[Dict[str, Any]]
+    # Wrapped as {"plan": [...], "info_extracted": {...}} to match Android TaskPlan model
+    plan: Dict[str, Any]
     confirmation_message: str
     glow_state: str = "working"
     status_text: str = "Planning your task..."
