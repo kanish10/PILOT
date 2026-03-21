@@ -490,18 +490,7 @@ class ActorAgent:
             ) if payload_text else False
 
             if already_typed:
-                # After typing, YouTube shows autocomplete suggestions.
-                # Tap the best matching suggestion to execute the search.
-                suggestion = _find_youtube_search_suggestion(elements, payload_text)
-                if suggestion:
-                    return {"action": "tap", "element_id": suggestion["id"],
-                            "status": "Tapping search suggestion"}
-                # No suggestion? Try tapping a non-editable "search" button
-                submit = _find_element_by_text(elements, ["search", "submit"])
-                if submit and not submit.get("editable"):
-                    return {"action": "tap", "element_id": submit["id"],
-                            "status": "Submitting search"}
-                # Already tapped a suggestion before? Then search was submitted
+                # Check if we already tapped a suggestion/submitted — if so, step is done
                 already_tapped_after_type = False
                 found_type = False
                 for a in reversed(action_history[-6:]):
@@ -512,7 +501,18 @@ class ActorAgent:
                         break
                 if already_tapped_after_type:
                     return {"action": "step_done", "status": "Search submitted"}
-                # Fallback: just mark done
+
+                # Haven't tapped a suggestion yet — find one to submit the search
+                suggestion = _find_youtube_search_suggestion(elements, payload_text)
+                if suggestion:
+                    return {"action": "tap", "element_id": suggestion["id"],
+                            "status": "Tapping search suggestion"}
+                # No suggestion? Try tapping a non-editable "search" button
+                submit = _find_element_by_text(elements, ["search", "submit"])
+                if submit and not submit.get("editable"):
+                    return {"action": "tap", "element_id": submit["id"],
+                            "status": "Submitting search"}
+                # Fallback: mark done so we don't loop
                 return {"action": "step_done", "status": "Search query entered"}
 
             # Has editable field → type the query

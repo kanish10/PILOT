@@ -35,6 +35,7 @@ import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.ArrowUpward
+import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Mic
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material3.Icon
@@ -66,7 +67,9 @@ import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.pilot.app.model.TaskStatus
 import com.pilot.app.service.OverlayService
+import com.pilot.app.ui.theme.Error
 import com.pilot.app.ui.theme.Accent
 import com.pilot.app.ui.theme.CardSurface
 import com.pilot.app.ui.theme.Primary
@@ -82,6 +85,8 @@ fun HomeScreen(onNavigateToSettings: () -> Unit) {
     val context = LocalContext.current
     var textInput by remember { mutableStateOf("") }
     var isFocused by remember { mutableStateOf(false) }
+    var isTaskActive by remember { mutableStateOf(false) }
+    var currentStatusText by remember { mutableStateOf("") }
 
     val infiniteTransition = rememberInfiniteTransition(label = "home")
 
@@ -145,6 +150,24 @@ fun HomeScreen(onNavigateToSettings: () -> Unit) {
         delay(200); showHeading = true
         delay(300); showInput = true
         delay(300); showMic = true
+    }
+
+    // Observe task state from the overlay service
+    LaunchedEffect(Unit) {
+        while (true) {
+            val loop = OverlayService.instance?.agentLoop
+            if (loop != null) {
+                val status = loop.taskStatus.value
+                isTaskActive = status == TaskStatus.PLANNING ||
+                        status == TaskStatus.EXECUTING ||
+                        status == TaskStatus.CONFIRMING
+                currentStatusText = loop.statusText.value
+            } else {
+                isTaskActive = false
+                currentStatusText = ""
+            }
+            delay(100)
+        }
     }
 
     Box(
@@ -240,7 +263,7 @@ fun HomeScreen(onNavigateToSettings: () -> Unit) {
                     TextPrimary
                 )
                 Text(
-                    text = "How can I help?",
+                    text = if (isTaskActive) currentStatusText.ifBlank { "Working..." } else "How can I help?",
                     style = MaterialTheme.typography.headlineLarge.copy(
                         brush = Brush.linearGradient(
                             colors = gradientColors,
@@ -281,16 +304,16 @@ fun HomeScreen(onNavigateToSettings: () -> Unit) {
                             .padding(horizontal = 20.dp),
                         contentAlignment = Alignment.CenterStart
                     ) {
-                        if (textInput.isEmpty()) {
+                        if (textInput.isEmpty() || isTaskActive) {
                             Text(
-                                text = "Type a command...",
+                                text = if (isTaskActive) "Task in progress..." else "Type a command...",
                                 style = MaterialTheme.typography.bodyLarge,
                                 color = TextSecondary
                             )
                         }
                         BasicTextField(
-                            value = textInput,
-                            onValueChange = { textInput = it },
+                            value = if (isTaskActive) "" else textInput,
+                            onValueChange = { if (!isTaskActive) textInput = it },
                             modifier = Modifier
                                 .fillMaxWidth()
                                 .onFocusChanged { isFocused = it.isFocused },
@@ -342,7 +365,7 @@ fun HomeScreen(onNavigateToSettings: () -> Unit) {
 
             Spacer(modifier = Modifier.height(32.dp))
 
-            // Pulsing mic button with glow
+            // Mic button (idle) or Stop button (active)
             AnimatedVisibility(
                 visible = showMic,
                 enter = fadeIn(tween(400)) + slideInVertically(
@@ -350,64 +373,117 @@ fun HomeScreen(onNavigateToSettings: () -> Unit) {
                     animationSpec = spring(dampingRatio = 0.4f, stiffness = 200f)
                 )
             ) {
-                Box(contentAlignment = Alignment.Center) {
-                    // Outer glow ring
-                    Box(
-                        modifier = Modifier
-                            .size(90.dp)
-                            .scale(micScale * 1.1f)
-                            .alpha(micGlow * 0.25f)
-                            .clip(RoundedCornerShape(20.dp))
-                            .background(
-                                Brush.radialGradient(
-                                    colors = listOf(Primary.copy(alpha = 0.4f), Color.Transparent)
+                if (isTaskActive) {
+                    // Stop button
+                    Box(contentAlignment = Alignment.Center) {
+                        Box(
+                            modifier = Modifier
+                                .size(90.dp)
+                                .scale(micScale * 1.1f)
+                                .alpha(micGlow * 0.25f)
+                                .clip(RoundedCornerShape(20.dp))
+                                .background(
+                                    Brush.radialGradient(
+                                        colors = listOf(Error.copy(alpha = 0.4f), Color.Transparent)
+                                    )
                                 )
-                            )
-                    )
-                    // Second glow ring
-                    Box(
-                        modifier = Modifier
-                            .size(78.dp)
-                            .scale(micScale)
-                            .alpha(micGlow * 0.15f)
-                            .clip(RoundedCornerShape(18.dp))
-                            .background(Primary.copy(alpha = 0.2f))
-                    )
-                    // Main button
-                    Box(
-                        modifier = Modifier
-                            .size(64.dp)
-                            .scale(micPressScale)
-                            .clip(RoundedCornerShape(16.dp))
-                            .background(
-                                Brush.linearGradient(
-                                    colors = listOf(Primary, Accent)
-                                )
-                            )
-                            .pointerInput(Unit) {
-                                detectTapGestures(
-                                    onPress = {
-                                        micPressed = true
-                                        tryAwaitRelease()
-                                        micPressed = false
-                                        val overlay = OverlayService.instance
-                                        if (overlay != null) {
-                                            overlay.speechHelper.onResult = { transcription ->
-                                                overlay.agentLoop.onVoiceResult(transcription)
-                                            }
-                                            overlay.speechHelper.startListening()
-                                        }
-                                    }
-                                )
-                            },
-                        contentAlignment = Alignment.Center
-                    ) {
-                        Icon(
-                            imageVector = Icons.Default.Mic,
-                            contentDescription = "Voice input",
-                            tint = Color.White,
-                            modifier = Modifier.size(28.dp)
                         )
+                        Box(
+                            modifier = Modifier
+                                .size(78.dp)
+                                .scale(micScale)
+                                .alpha(micGlow * 0.15f)
+                                .clip(RoundedCornerShape(18.dp))
+                                .background(Error.copy(alpha = 0.2f))
+                        )
+                        Box(
+                            modifier = Modifier
+                                .size(64.dp)
+                                .scale(micPressScale)
+                                .clip(RoundedCornerShape(16.dp))
+                                .background(
+                                    Brush.linearGradient(
+                                        colors = listOf(Error, Error.copy(alpha = 0.7f))
+                                    )
+                                )
+                                .pointerInput(Unit) {
+                                    detectTapGestures(
+                                        onPress = {
+                                            micPressed = true
+                                            tryAwaitRelease()
+                                            micPressed = false
+                                            OverlayService.instance?.agentLoop?.cancelCurrentTask()
+                                        }
+                                    )
+                                },
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.Close,
+                                contentDescription = "Stop task",
+                                tint = Color.White,
+                                modifier = Modifier.size(28.dp)
+                            )
+                        }
+                    }
+                } else {
+                    // Mic button
+                    Box(contentAlignment = Alignment.Center) {
+                        Box(
+                            modifier = Modifier
+                                .size(90.dp)
+                                .scale(micScale * 1.1f)
+                                .alpha(micGlow * 0.25f)
+                                .clip(RoundedCornerShape(20.dp))
+                                .background(
+                                    Brush.radialGradient(
+                                        colors = listOf(Primary.copy(alpha = 0.4f), Color.Transparent)
+                                    )
+                                )
+                        )
+                        Box(
+                            modifier = Modifier
+                                .size(78.dp)
+                                .scale(micScale)
+                                .alpha(micGlow * 0.15f)
+                                .clip(RoundedCornerShape(18.dp))
+                                .background(Primary.copy(alpha = 0.2f))
+                        )
+                        Box(
+                            modifier = Modifier
+                                .size(64.dp)
+                                .scale(micPressScale)
+                                .clip(RoundedCornerShape(16.dp))
+                                .background(
+                                    Brush.linearGradient(
+                                        colors = listOf(Primary, Accent)
+                                    )
+                                )
+                                .pointerInput(Unit) {
+                                    detectTapGestures(
+                                        onPress = {
+                                            micPressed = true
+                                            tryAwaitRelease()
+                                            micPressed = false
+                                            val overlay = OverlayService.instance
+                                            if (overlay != null) {
+                                                overlay.speechHelper.onResult = { transcription ->
+                                                    overlay.agentLoop.onVoiceResult(transcription)
+                                                }
+                                                overlay.speechHelper.startListening()
+                                            }
+                                        }
+                                    )
+                                },
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.Mic,
+                                contentDescription = "Voice input",
+                                tint = Color.White,
+                                modifier = Modifier.size(28.dp)
+                            )
+                        }
                     }
                 }
             }

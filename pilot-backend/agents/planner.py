@@ -29,11 +29,11 @@ RULES:
 APP-SPECIFIC RULES (follow these exactly):
 - YouTube/music: EXACTLY these steps, no more:
   1. Open YouTube app (app: "YouTube", needs: null)
-  2. Tap the search icon to open search (app: "YouTube", needs: null)
-  3. Type the search query and search (app: "YouTube", needs: "the exact song/video name from user request")
-  4. Tap the first video result to play it (app: "YouTube", needs: null)
-  5. Verify the video is playing (app: "YouTube", needs: null)
-  That's 5 steps. The "needs" for step 3 MUST contain the exact song/video name the user asked for.
+  2. Search for the song (app: "YouTube", needs: "the exact song/video name from user request")
+  3. Tap the first video result to play it (app: "YouTube", needs: null)
+  4. Verify the video is playing (app: "YouTube", needs: null)
+  That's 4 steps. The "needs" for step 2 MUST contain the exact song/video name the user asked for.
+  Do NOT split search into separate "tap search icon" and "type query" steps — combine them into one.
 - Spotify: Open Spotify → Search for the song → Tap the song to play → Verify playing.
 - Uber: Pickup location is auto-set from GPS — do NOT make a separate "set pickup" step.
   Plan: Open Uber → Enter destination → Confirm pickup area → Choose ride type (UberX) → Confirm booking → Verify.

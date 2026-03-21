@@ -17,6 +17,9 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
 
 class AgentLoopController(private val service: OverlayService) {
@@ -27,7 +30,20 @@ class AgentLoopController(private val service: OverlayService) {
 
     private val scope = CoroutineScope(Dispatchers.Main + SupervisorJob())
     private var loopJob: Job? = null
-    private var taskState = TaskState()
+
+    private val _taskStatus = MutableStateFlow(TaskStatus.IDLE)
+    val taskStatus: StateFlow<TaskStatus> = _taskStatus.asStateFlow()
+
+    private val _statusText = MutableStateFlow("")
+    val statusText: StateFlow<String> = _statusText.asStateFlow()
+
+    private var _taskStateField = TaskState()
+    private var taskState: TaskState
+        get() = _taskStateField
+        set(value) {
+            _taskStateField = value
+            _taskStatus.value = value.status
+        }
 
     private val apiClient = PilotApiClient(
         com.pilot.app.BuildConfig.SERVER_URL
@@ -38,6 +54,11 @@ class AgentLoopController(private val service: OverlayService) {
 
     fun updateServerUrl(url: String) {
         apiClient.updateBaseUrl(url)
+    }
+
+    private fun setStatusText(text: String) {
+        _statusText.value = text
+        service.updateStatusText(text)
     }
 
     fun onVoiceResult(transcription: String) {
@@ -75,7 +96,7 @@ class AgentLoopController(private val service: OverlayService) {
                 )
 
                 service.setGlowState(GlowState.WORKING)
-                service.updateStatusText("Planning your task...")
+                setStatusText("Planning your task...")
                 service.speak("Got it, working on that for you.")
 
                 val startResult = apiClient.startTask(transcription)
@@ -112,7 +133,7 @@ class AgentLoopController(private val service: OverlayService) {
         while (taskState.currentStepIndex < plan.plan.size) {
             val currentStep = plan.plan[taskState.currentStepIndex]
             Log.i(TAG, "Step ${currentStep.step}: ${currentStep.objective}")
-            service.updateStatusText(currentStep.objective + "...")
+            setStatusText(currentStep.objective + "...")
 
             var retries = 0
             var stepDone = false
@@ -157,7 +178,7 @@ class AgentLoopController(private val service: OverlayService) {
                 val agentResponse = stepResult.getOrThrow()
 
                 if (agentResponse.statusText.isNotBlank()) {
-                    service.updateStatusText(agentResponse.statusText)
+                    setStatusText(agentResponse.statusText)
                 }
 
                 val action = agentResponse.action
@@ -259,7 +280,7 @@ class AgentLoopController(private val service: OverlayService) {
         taskState = taskState.copy(status = TaskStatus.DONE)
         service.setGlowState(GlowState.DONE)
         service.speak("All done!")
-        service.updateStatusText("Task complete")
+        setStatusText("Task complete")
 
         scope.launch {
             delay(3000)
@@ -271,7 +292,7 @@ class AgentLoopController(private val service: OverlayService) {
         Log.e(TAG, message)
         taskState = taskState.copy(status = TaskStatus.ERROR)
         service.setGlowState(GlowState.ERROR)
-        service.updateStatusText(message)
+        setStatusText(message)
         service.speak("Something went wrong. $message")
 
         scope.launch {
@@ -283,7 +304,7 @@ class AgentLoopController(private val service: OverlayService) {
     private fun resetState() {
         taskState = TaskState()
         service.setGlowState(GlowState.IDLE)
-        service.updateStatusText("")
+        setStatusText("")
     }
 
     fun cancelCurrentTask() {
