@@ -1,27 +1,39 @@
 package com.pilot.app.ui.screens
 
+import androidx.compose.animation.AnimatedContent
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.animateColorAsState
+import androidx.compose.animation.core.Spring
+import androidx.compose.animation.core.animateDpAsState
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.spring
+import androidx.compose.animation.core.tween
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.slideInHorizontally
+import androidx.compose.animation.slideInVertically
+import androidx.compose.animation.slideOutHorizontally
+import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.Cloud
-import androidx.compose.material.icons.filled.PlayArrow
-import androidx.compose.material.icons.filled.Stop
-import androidx.compose.material.icons.filled.VolumeUp
-import androidx.compose.material3.Button
-import androidx.compose.material3.ButtonDefaults
-import androidx.compose.material3.Card
-import androidx.compose.material3.CardDefaults
+import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.OutlinedTextFieldDefaults
@@ -29,226 +41,296 @@ import androidx.compose.material3.Switch
 import androidx.compose.material3.SwitchDefaults
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.scale
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.pilot.app.BuildConfig
-import com.pilot.app.agent.TaskStateManager
 import com.pilot.app.service.OverlayService
-import com.pilot.app.ui.theme.PilotCard
-import com.pilot.app.ui.theme.PilotGreen
-import com.pilot.app.ui.theme.PilotOrange
-import com.pilot.app.ui.theme.PilotPurple
+import com.pilot.app.ui.theme.Primary
+import com.pilot.app.ui.theme.TextPrimary
+import com.pilot.app.ui.theme.TextSecondary
+import kotlinx.coroutines.delay
+
+private data class SettingItem(val id: Int, val title: String)
+
+private val settingItems = listOf(
+    SettingItem(0, "Server"),
+    SettingItem(1, "Voice"),
+    SettingItem(2, "Overlay"),
+    SettingItem(3, "About")
+)
 
 @Composable
-fun SettingsScreen() {
-    val context = LocalContext.current
+fun SettingsScreen(onBack: () -> Unit) {
+    var selectedIndex by remember { mutableIntStateOf(0) }
     var serverUrl by remember { mutableStateOf(BuildConfig.SERVER_URL) }
     var ttsEnabled by remember { mutableStateOf(true) }
-    val isServiceRunning by TaskStateManager.isServiceRunning.collectAsState()
-    val statusText by TaskStateManager.statusText.collectAsState()
-    val glowState by TaskStateManager.glowState.collectAsState()
+    var overlayAutoStart by remember { mutableStateOf(false) }
 
-    Column(
+    // Staggered entrance for sidebar items
+    var showItems by remember { mutableStateOf(List(4) { false }) }
+    var showContent by remember { mutableStateOf(false) }
+
+    LaunchedEffect(Unit) {
+        for (i in 0 until 4) {
+            delay(80)
+            showItems = showItems.toMutableList().also { it[i] = true }
+        }
+        delay(100)
+        showContent = true
+    }
+
+    // Back button press animation
+    var backPressed by remember { mutableStateOf(false) }
+    val backScale by animateFloatAsState(
+        targetValue = if (backPressed) 0.85f else 1f,
+        animationSpec = spring(dampingRatio = 0.5f, stiffness = 800f),
+        label = "backScale"
+    )
+
+    Row(
         modifier = Modifier
             .fillMaxSize()
             .background(MaterialTheme.colorScheme.background)
-            .padding(24.dp),
-        horizontalAlignment = Alignment.CenterHorizontally
     ) {
-        Spacer(modifier = Modifier.height(48.dp))
-
-        Text(
-            text = "PILOT",
-            fontSize = 36.sp,
-            fontWeight = FontWeight.Bold,
-            color = PilotPurple
-        )
-        Spacer(modifier = Modifier.height(4.dp))
-        Text(
-            text = "Control Center",
-            fontSize = 16.sp,
-            color = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.7f)
-        )
-
-        Spacer(modifier = Modifier.height(32.dp))
-
-        // Server URL
-        Card(
-            modifier = Modifier.fillMaxWidth(),
-            shape = RoundedCornerShape(16.dp),
-            colors = CardDefaults.cardColors(containerColor = PilotCard)
+        // Left sidebar
+        Column(
+            modifier = Modifier
+                .width(140.dp)
+                .fillMaxHeight()
+                .padding(top = 48.dp)
         ) {
-            Column(modifier = Modifier.padding(16.dp)) {
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Icon(
-                        imageVector = Icons.Default.Cloud,
-                        contentDescription = null,
-                        tint = PilotPurple,
-                        modifier = Modifier
-                            .size(36.dp)
-                            .clip(CircleShape)
-                            .background(PilotPurple.copy(alpha = 0.15f))
-                            .padding(8.dp)
-                    )
-                    Spacer(modifier = Modifier.width(12.dp))
-                    Text("Server Connection", fontWeight = FontWeight.Medium, fontSize = 15.sp)
-                }
-                Spacer(modifier = Modifier.height(12.dp))
-                OutlinedTextField(
-                    value = serverUrl,
-                    onValueChange = {
-                        serverUrl = it
-                        OverlayService.instance?.agentLoop?.updateServerUrl(it)
-                    },
-                    label = { Text("Server URL") },
-                    singleLine = true,
-                    modifier = Modifier.fillMaxWidth(),
-                    shape = RoundedCornerShape(12.dp),
-                    colors = OutlinedTextFieldDefaults.colors(
-                        focusedBorderColor = PilotPurple,
-                        cursorColor = PilotPurple
-                    )
-                )
-            }
-        }
-
-        Spacer(modifier = Modifier.height(16.dp))
-
-        // TTS Toggle
-        Card(
-            modifier = Modifier.fillMaxWidth(),
-            shape = RoundedCornerShape(16.dp),
-            colors = CardDefaults.cardColors(containerColor = PilotCard)
-        ) {
-            Row(
+            IconButton(
+                onClick = {
+                    backPressed = true
+                    onBack()
+                },
                 modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(16.dp),
-                verticalAlignment = Alignment.CenterVertically
+                    .padding(start = 8.dp)
+                    .scale(backScale)
             ) {
                 Icon(
-                    imageVector = Icons.Default.VolumeUp,
-                    contentDescription = null,
-                    tint = PilotPurple,
-                    modifier = Modifier
-                        .size(36.dp)
-                        .clip(CircleShape)
-                        .background(PilotPurple.copy(alpha = 0.15f))
-                        .padding(8.dp)
-                )
-                Spacer(modifier = Modifier.width(12.dp))
-                Column(modifier = Modifier.weight(1f)) {
-                    Text("Voice Feedback", fontWeight = FontWeight.Medium, fontSize = 15.sp)
-                    Text(
-                        "Speak status updates aloud",
-                        fontSize = 12.sp,
-                        color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f)
-                    )
-                }
-                Switch(
-                    checked = ttsEnabled,
-                    onCheckedChange = {
-                        ttsEnabled = it
-                        OverlayService.instance?.ttsHelper?.enabled = it
-                    },
-                    colors = SwitchDefaults.colors(checkedTrackColor = PilotPurple)
+                    imageVector = Icons.AutoMirrored.Filled.ArrowBack,
+                    contentDescription = "Back",
+                    tint = TextPrimary
                 )
             }
-        }
 
-        Spacer(modifier = Modifier.height(24.dp))
+            Spacer(modifier = Modifier.height(16.dp))
 
-        // Start/Stop overlay
-        Button(
-            onClick = {
-                if (isServiceRunning) {
-                    OverlayService.stop(context)
-                    TaskStateManager.setServiceRunning(false)
-                } else {
-                    OverlayService.start(context)
-                    TaskStateManager.setServiceRunning(true)
-                }
-            },
-            modifier = Modifier
-                .fillMaxWidth()
-                .height(56.dp),
-            shape = RoundedCornerShape(16.dp),
-            colors = ButtonDefaults.buttonColors(
-                containerColor = if (isServiceRunning) PilotOrange else PilotGreen
-            )
-        ) {
-            Icon(
-                imageVector = if (isServiceRunning) Icons.Default.Stop else Icons.Default.PlayArrow,
-                contentDescription = null,
-                modifier = Modifier.size(24.dp)
-            )
-            Spacer(modifier = Modifier.width(8.dp))
-            Text(
-                text = if (isServiceRunning) "Stop PILOT" else "Start PILOT",
-                fontSize = 16.sp,
-                fontWeight = FontWeight.SemiBold
-            )
-        }
+            settingItems.forEachIndexed { index, item ->
+                val isSelected = item.id == selectedIndex
 
-        Spacer(modifier = Modifier.height(24.dp))
+                // Animated properties
+                val bgAlpha by animateFloatAsState(
+                    targetValue = if (isSelected) 0.1f else 0f,
+                    animationSpec = tween(300), label = "bgA_$index"
+                )
+                val textColor by animateColorAsState(
+                    targetValue = if (isSelected) Primary else TextSecondary,
+                    animationSpec = tween(300), label = "txtC_$index"
+                )
+                val indicatorWidth by animateDpAsState(
+                    targetValue = if (isSelected) 4.dp else 0.dp,
+                    animationSpec = spring(dampingRatio = 0.6f, stiffness = 400f),
+                    label = "ind_$index"
+                )
 
-        // Status info
-        if (isServiceRunning) {
-            Card(
-                modifier = Modifier.fillMaxWidth(),
-                shape = RoundedCornerShape(16.dp),
-                colors = CardDefaults.cardColors(containerColor = PilotCard)
-            ) {
-                Column(modifier = Modifier.padding(16.dp)) {
-                    Text(
-                        "Status",
-                        fontWeight = FontWeight.Medium,
-                        fontSize = 14.sp,
-                        color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f)
+                AnimatedVisibility(
+                    visible = showItems.getOrElse(index) { false },
+                    enter = fadeIn(tween(300)) + slideInVertically(
+                        initialOffsetY = { 30 },
+                        animationSpec = spring(dampingRatio = 0.7f, stiffness = 300f)
                     )
-                    Spacer(modifier = Modifier.height(8.dp))
+                ) {
                     Row(verticalAlignment = Alignment.CenterVertically) {
-                        val dotColor = when (glowState) {
-                            com.pilot.app.model.GlowState.IDLE -> Color.Gray
-                            com.pilot.app.model.GlowState.LISTENING -> Color(0xFF00CEFF)
-                            com.pilot.app.model.GlowState.WORKING -> PilotPurple
-                            com.pilot.app.model.GlowState.DONE -> PilotGreen
-                            com.pilot.app.model.GlowState.ERROR -> PilotOrange
-                        }
-                        Spacer(
+                        // Animated left indicator bar
+                        Box(
                             modifier = Modifier
-                                .size(10.dp)
-                                .clip(CircleShape)
-                                .background(dotColor)
+                                .width(indicatorWidth)
+                                .height(36.dp)
+                                .clip(RoundedCornerShape(topEnd = 4.dp, bottomEnd = 4.dp))
+                                .background(Primary)
                         )
-                        Spacer(modifier = Modifier.width(8.dp))
+
                         Text(
-                            text = glowState.name,
-                            fontSize = 14.sp,
-                            fontWeight = FontWeight.Medium
-                        )
-                    }
-                    if (statusText.isNotBlank()) {
-                        Spacer(modifier = Modifier.height(4.dp))
-                        Text(
-                            text = statusText,
-                            fontSize = 13.sp,
-                            color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.7f)
+                            text = item.title,
+                            style = MaterialTheme.typography.titleMedium,
+                            color = textColor,
+                            fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal,
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clip(RoundedCornerShape(topEnd = 12.dp, bottomEnd = 12.dp))
+                                .background(Primary.copy(alpha = bgAlpha))
+                                .clickable(
+                                    indication = null,
+                                    interactionSource = remember { MutableInteractionSource() }
+                                ) { selectedIndex = item.id }
+                                .padding(horizontal = 20.dp, vertical = 14.dp)
                         )
                     }
                 }
             }
         }
+
+        // Divider
+        HorizontalDivider(
+            modifier = Modifier
+                .width(1.dp)
+                .fillMaxHeight()
+                .padding(vertical = 48.dp),
+            color = Primary.copy(alpha = 0.12f)
+        )
+
+        // Right detail panel with crossfade
+        AnimatedContent(
+            targetState = selectedIndex,
+            transitionSpec = {
+                (fadeIn(tween(250)) + slideInHorizontally(
+                    initialOffsetX = { 60 },
+                    animationSpec = spring(dampingRatio = 0.8f, stiffness = 300f)
+                )) togetherWith (fadeOut(tween(150)) + slideOutHorizontally(
+                    targetOffsetX = { -30 },
+                    animationSpec = tween(150)
+                ))
+            },
+            label = "settingsContent"
+        ) { targetIndex ->
+            Column(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .padding(start = 24.dp, end = 24.dp, top = 48.dp)
+            ) {
+                Text(
+                    text = settingItems[targetIndex].title,
+                    style = MaterialTheme.typography.headlineMedium,
+                    color = TextPrimary
+                )
+
+                Spacer(modifier = Modifier.height(32.dp))
+
+                when (targetIndex) {
+                    0 -> ServerSettings(
+                        serverUrl = serverUrl,
+                        onUrlChange = {
+                            serverUrl = it
+                            OverlayService.instance?.agentLoop?.updateServerUrl(it)
+                        }
+                    )
+                    1 -> VoiceSettings(
+                        ttsEnabled = ttsEnabled,
+                        onToggle = {
+                            ttsEnabled = it
+                            OverlayService.instance?.ttsHelper?.enabled = it
+                        }
+                    )
+                    2 -> OverlaySettings(
+                        autoStart = overlayAutoStart,
+                        onToggle = { overlayAutoStart = it }
+                    )
+                    3 -> AboutSettings()
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun ServerSettings(serverUrl: String, onUrlChange: (String) -> Unit) {
+    Text("Server URL", style = MaterialTheme.typography.titleMedium, color = TextPrimary)
+    Spacer(modifier = Modifier.height(8.dp))
+    Text(
+        "The address of the Mac server running the AI backend.",
+        style = MaterialTheme.typography.bodySmall, color = TextSecondary
+    )
+    Spacer(modifier = Modifier.height(16.dp))
+    OutlinedTextField(
+        value = serverUrl,
+        onValueChange = onUrlChange,
+        label = { Text("URL") },
+        singleLine = true,
+        modifier = Modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(12.dp),
+        colors = OutlinedTextFieldDefaults.colors(
+            focusedBorderColor = Primary,
+            cursorColor = Primary,
+            unfocusedBorderColor = Primary.copy(alpha = 0.3f)
+        )
+    )
+}
+
+@Composable
+private fun VoiceSettings(ttsEnabled: Boolean, onToggle: (Boolean) -> Unit) {
+    SettingToggleRow(
+        title = "Voice Feedback",
+        description = "Speak status updates aloud while performing tasks.",
+        checked = ttsEnabled,
+        onToggle = onToggle
+    )
+}
+
+@Composable
+private fun OverlaySettings(autoStart: Boolean, onToggle: (Boolean) -> Unit) {
+    SettingToggleRow(
+        title = "Auto-start Overlay",
+        description = "Automatically show the floating button when the app launches.",
+        checked = autoStart,
+        onToggle = onToggle
+    )
+}
+
+@Composable
+private fun AboutSettings() {
+    Text("PILOT v1.0", style = MaterialTheme.typography.titleMedium, color = TextPrimary)
+    Spacer(modifier = Modifier.height(8.dp))
+    Text(
+        "AI-powered phone automation assistant. Built for the IEEE UBC EDT Competition.",
+        style = MaterialTheme.typography.bodyMedium, color = TextSecondary, lineHeight = 22.sp
+    )
+    Spacer(modifier = Modifier.height(24.dp))
+    Text(
+        "Tap the floating button to speak a command. Pilot will read the screen, plan the steps, and execute them for you.",
+        style = MaterialTheme.typography.bodyMedium, color = TextSecondary, lineHeight = 22.sp
+    )
+}
+
+@Composable
+private fun SettingToggleRow(
+    title: String, description: String,
+    checked: Boolean, onToggle: (Boolean) -> Unit
+) {
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        verticalAlignment = Alignment.Top
+    ) {
+        Column(modifier = Modifier.weight(1f)) {
+            Text(title, style = MaterialTheme.typography.titleMedium, color = TextPrimary)
+            Spacer(modifier = Modifier.height(4.dp))
+            Text(
+                description, style = MaterialTheme.typography.bodySmall,
+                color = TextSecondary, lineHeight = 18.sp
+            )
+        }
+        Spacer(modifier = Modifier.width(16.dp))
+        Switch(
+            checked = checked,
+            onCheckedChange = onToggle,
+            colors = SwitchDefaults.colors(
+                checkedTrackColor = Primary,
+                checkedThumbColor = Color.White
+            )
+        )
     }
 }

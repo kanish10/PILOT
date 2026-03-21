@@ -14,8 +14,8 @@ class FloatingButtonView(context: Context) : FrameLayout(context) {
 
     companion object {
         private const val BUTTON_SIZE_DP = 56
-        private const val COLOR_PRIMARY = 0xFF6C5CE7.toInt()
-        private const val COLOR_LISTENING = 0xFF00CEFF.toInt()
+        private const val COLOR_PRIMARY = 0xFF7C5CFC.toInt()
+        private const val COLOR_LISTENING = 0xFF00D9FF.toInt()
     }
 
     var onTapListener: (() -> Unit)? = null
