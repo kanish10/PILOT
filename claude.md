@@ -18,7 +18,7 @@ PILOT uses 5 specialized agents that communicate through a central **Agent Orche
 ```
 ┌─────────────────────────────────────────────────────────────────┐
 │                        USER (Voice Input)                       │
-│                  "Order me a pizza from Domino's"                │
+│                  "Order me a pizza from Domino's"               │
 └─────────────────────┬───────────────────────────────────────────┘
                       │
                       ▼
@@ -27,17 +27,17 @@ PILOT uses 5 specialized agents that communicate through a central **Agent Orche
 │         Lives on Mac server. Controls the entire flow.          │
 │         Routes messages between all other agents.               │
 │         Manages conversation state and task progress.           │
-└──┬──────────┬───────────┬───────────┬───────────┬──────────────┘
+└──┬──────────┬───────────┬───────────┬───────────┬───────────────│
    │          │           │           │           │
    ▼          ▼           ▼           ▼           ▼
 ┌──────┐ ┌──────────┐ ┌──────────┐ ┌──────────┐ ┌──────────┐
-│AGENT1│ │  AGENT 2  │ │  AGENT 3  │ │  AGENT 4  │ │  AGENT 5  │
-│EYES  │ │  PLANNER  │ │  ACTOR   │ │  VERIFIER │ │  VOICE   │
-│      │ │           │ │          │ │           │ │          │
-│Reads │ │Breaks task│ │Decides   │ │Checks if  │ │Speaks to │
-│screen│ │into steps │ │next tap/ │ │step worked│ │user and  │
-│on    │ │           │ │type/     │ │or failed  │ │updates   │
-│phone │ │           │ │scroll    │ │           │ │glow UI   │
+│AGENT1│ │  AGENT 2 │ │  AGENT 3 │ │  AGENT 4 │ │  AGENT 5 │
+│EYES  │ │  PLANNER │ │  ACTOR   │ │  VERIFIER│ │  VOICE   │
+│      │ │          │ │          │ │          │ │          │
+│Reads │ │Break task│ │Decides   │ │Checks if │ │Speaks to │
+│screen│ │into steps│ │next tap/ │ │step work-│ │user and  │
+│on    │ │          │ │type/     │ │ed or fai-│ │updates   │
+│phone │ │          │ │scroll    │ │led       | │ │glow UI │
 └──────┘ └──────────┘ └──────────┘ └──────────┘ └──────────┘
 ```
 
