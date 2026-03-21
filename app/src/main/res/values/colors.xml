@@ -1,10 +1,13 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <color name="pilot_blue">#00CEFF</color>
-    <color name="pilot_purple">#6C5CE7</color>
-    <color name="pilot_green">#00E676</color>
-    <color name="pilot_orange">#FF6D00</color>
-    <color name="pilot_dark">#1A1A2E</color>
-    <color name="pilot_surface">#16213E</color>
-    <color name="pilot_white">#FFFFFF</color>
+    <color name="pilot_primary">#7C5CFC</color>
+    <color name="pilot_accent">#00D9FF</color>
+    <color name="pilot_background">#0A0E1A</color>
+    <color name="pilot_surface">#131829</color>
+    <color name="pilot_text_primary">#E8ECF4</color>
+    <color name="pilot_text_secondary">#6B7A99</color>
+    <color name="pilot_border">#7C5CFC</color>
+    <color name="pilot_success">#00E5A0</color>
+    <color name="pilot_warning">#FFB547</color>
+    <color name="pilot_error">#FF5A5A</color>
 </resources>

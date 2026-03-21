@@ -78,3 +78,10 @@ Thumbs.db
 logs/
 .gradle/
 .gradle*
+/build
+/captures
+.externalNativeBuild
+.cxx
+local.properties
+/app/build
+*.png
