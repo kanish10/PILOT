@@ -20,7 +20,6 @@ from models.requests import (
     TaskVerifyRequest,
     TaskVerifyResponse,
     UserResponseRequest,
-    UserResponseResponse,
 )
 from models.task import GlowState
 
@@ -50,9 +49,13 @@ async def task_start(req: TaskStartRequest) -> TaskStartResponse:
     orch = container.orchestrator
     task = await orch.start_task(req.transcription)
 
+    # Android's TaskStartResponse.plan is TaskPlan = {"plan": [...], "info_extracted": {...}}
     return TaskStartResponse(
         task_id=task.task_id,
-        plan=[s.model_dump() for s in task.plan],
+        plan={
+            "plan": [s.model_dump() for s in task.plan],
+            "info_extracted": task.info,
+        },
         confirmation_message=task.confirmation_message or f"On it: {req.transcription}",
         glow_state=task.glow_state.value,
         status_text=task.status_text,
@@ -122,8 +125,8 @@ async def task_verify(req: TaskVerifyRequest) -> TaskVerifyResponse:
 
 # ── Task: user response (yes/no/cancel) ───────────────────────────────────────
 
-@router.post("/task/user-response", response_model=UserResponseResponse)
-async def task_user_response(req: UserResponseRequest) -> UserResponseResponse:
+@router.post("/task/user-response")
+async def task_user_response(req: UserResponseRequest) -> Dict[str, Any]:
     """
     Phone sends user's spoken response (yes/no/cancel/free text).
     Used when the AI is waiting for confirmation (e.g. before payment).
@@ -138,12 +141,20 @@ async def task_user_response(req: UserResponseRequest) -> UserResponseResponse:
             response=req.response,
         )
 
-    return UserResponseResponse(
-        action=result["action"],
-        status_text=result["status_text"],
-        glow_state=result["glow_state"],
-        task_complete=result.get("task_complete", False),
-    )
+    # Android deserialises this as AgentStepResponse where `action` must be a valid
+    # ActionPayload dict (ActionPayloadSerializer rejects plain strings like "continue").
+    is_cancelled = result["action"] == "cancelled"
+    return {
+        "action": {
+            "action": "step_done" if is_cancelled else "wait",
+            "seconds": 0,
+            "status": result["status_text"],
+        },
+        "status_text": result["status_text"],
+        "glow_state": "idle" if is_cancelled else "working",
+        "step_complete": is_cancelled,
+        "task_complete": is_cancelled,
+    }
 
 
 # ── Task: cancel ──────────────────────────────────────────────────────────────

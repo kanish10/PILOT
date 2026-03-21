@@ -3,9 +3,6 @@ Dependency injection container.
 main.py wires everything up; routes.py reads from here.
 Avoids circular imports.
 """
-from typing import Optional
-
-
 class Container:
     def __init__(self) -> None:
         self._orchestrator = None
