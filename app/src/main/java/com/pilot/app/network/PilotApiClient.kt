@@ -60,6 +60,7 @@ class PilotApiClient(private var baseUrl: String) {
         taskId: String,
         userIntent: String,
         currentStep: String,
+        stepNeeds: String? = null,
         uiTree: ScreenState,
         screenshotB64: String? = null,
         actionHistory: List<ActionRecord> = emptyList()
@@ -72,6 +73,7 @@ class PilotApiClient(private var baseUrl: String) {
                     taskId = taskId,
                     userIntent = userIntent,
                     currentStep = currentStep,
+                    stepNeeds = stepNeeds,
                     uiTree = uiTree,
                     screenshotB64 = screenshotB64,
                     actionHistory = actionHistory

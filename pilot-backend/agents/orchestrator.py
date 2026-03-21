@@ -11,7 +11,7 @@ State machine:
 import logging
 from typing import Any, Dict, List, Optional
 
-from agents.actor import ActorAgent
+from agents.actor import ActorAgent, _APP_ALIASES
 from agents.planner import PlannerAgent
 from agents.verifier import VerifierAgent
 from config import settings
@@ -375,13 +375,73 @@ class Orchestrator:
         ui_tree: Dict[str, Any],
         action_history: list,
         screenshot_b64: Optional[str] = None,
+        step_needs: Optional[str] = None,
     ) -> Dict[str, Any]:
         """
         Simplified stateless endpoint: runs Actor only and returns the next action.
         Does not require a task to exist in state_store.
         """
+        current_package = (ui_tree.get("package") or "").lower()
+        expected_package = _resolve_expected_package(current_step, user_intent)
+
+        # ── STUCK DETECTION: if agent is looping, force recovery ───────────
+        stuck_recovery = self._detect_stuck_and_recover(
+            action_history, current_step, expected_package
+        )
+        if stuck_recovery is not None:
+            return stuck_recovery
+
+        # Detect loops in action history
+        consecutive_vision = 0
+        recent_scrolls = 0
+        consecutive_open_app = 0
+        consecutive_waits = 0
+        for a in reversed(action_history[-6:]):
+            if a.get("action") == "need_vision":
+                consecutive_vision += 1
+            else:
+                break
+        for a in reversed(action_history[-4:]):
+            if a.get("action") == "open_app":
+                consecutive_open_app += 1
+            else:
+                break
+        for a in reversed(action_history[-6:]):
+            if a.get("action") == "wait":
+                consecutive_waits += 1
+            else:
+                break
+        for a in action_history[-6:]:
+            if a.get("action") in ("scroll_down", "scroll_up"):
+                recent_scrolls += 1
+
+        # Wrong-app detection: if we're in the wrong app, go back to the right one
+        if (
+            expected_package
+            and current_package
+            and current_package != expected_package
+            and "launcher" not in current_package
+            and "android" != current_package
+        ):
+            logger.warning(
+                "[ORCH] Wrong app detected: in %s, need %s. Switching back.",
+                current_package, expected_package,
+            )
+            return {
+                "action": {"action": "open_app", "package": expected_package, "status": "Switching to correct app"},
+                "status_text": "Switching to correct app",
+                "glow_state": GlowState.WORKING.value,
+                "step_complete": False,
+                "task_complete": False,
+            }
+
         use_vision = screenshot_b64 is not None and bool(action_history) and \
             action_history[-1].get("action") == "need_vision"
+
+        # If vision has failed 2+ times, stop trying
+        if consecutive_vision >= 2:
+            use_vision = False
+            logger.warning("[ORCH] need_vision loop detected (%d), forcing text-only", consecutive_vision)
 
         action = await self.actor.decide(
             objective=current_step,
@@ -390,10 +450,44 @@ class Orchestrator:
             user_intent=user_intent,
             use_vision=use_vision,
             screenshot_b64=screenshot_b64,
-            step_context={"objective": current_step},
+            step_context={"objective": current_step, "needs": step_needs or ""},
         )
 
         action_type = action.get("action", "")
+
+        # Break need_vision loop
+        if action_type == "need_vision" and consecutive_vision >= 2:
+            logger.warning("[ORCH] Overriding need_vision loop → need_help")
+            action = {
+                "action": "need_help",
+                "question": f"I'm having trouble with: {current_step}. Can you help?",
+                "status": "Need your guidance now",
+            }
+            action_type = "need_help"
+
+        # Break scroll oscillation loop (4+ scrolls in last 6 actions)
+        if action_type in ("scroll_down", "scroll_up") and recent_scrolls >= 4:
+            logger.warning("[ORCH] Scroll oscillation detected (%d in last 6), escalating", recent_scrolls)
+            action = {
+                "action": "need_help",
+                "question": f"I can't find what I need for: {current_step}. Can you help?",
+                "status": "Need your guidance now",
+            }
+            action_type = "need_help"
+
+        # Break open_app loop (2+ consecutive open_app for same package)
+        if action_type == "open_app" and consecutive_open_app >= 2:
+            logger.warning("[ORCH] open_app loop detected (%d consecutive), marking step_done", consecutive_open_app)
+            action = {"action": "step_done", "status": "App appears to be open"}
+            action_type = "step_done"
+
+        # Break wait loop (3+ consecutive waits = screen isn't changing, skip LLM)
+        if action_type == "wait" and consecutive_waits >= 3:
+            logger.warning("[ORCH] Wait loop detected (%d consecutive), forcing LLM decision", consecutive_waits)
+            # Force LLM to decide instead of waiting again
+            action = {"action": "step_done", "status": "Moving on from stuck screen"}
+            action_type = "step_done"
+
         step_complete = action_type == "step_done"
         task_complete = False  # stateless: caller must track this
 
@@ -404,6 +498,110 @@ class Orchestrator:
             "step_complete": step_complete,
             "task_complete": task_complete,
         }
+
+    def _detect_stuck_and_recover(
+        self,
+        action_history: list,
+        current_step: str,
+        expected_package: Optional[str],
+    ) -> Optional[Dict[str, Any]]:
+        """
+        Detect if the agent is stuck in a loop and return a recovery action.
+        Returns None if not stuck, or a response dict if recovery is needed.
+
+        Recovery escalation:
+          1. press back (clear modals/popups)
+          2. go home (escape the app entirely)
+          3. open_app (fresh start in the right app)
+          4. step_done (skip the step and move on)
+        """
+        if len(action_history) < 8:
+            return None
+
+        recent = action_history[-8:]
+        recent_types = [a.get("action") for a in recent]
+
+        # Only trigger stuck detection if recent actions are all "work" actions
+        # (no recovery actions like back/home/step_done already in progress)
+        work_actions = {"tap", "type", "scroll_down", "scroll_up", "need_vision"}
+        all_work = all(a.get("action") in work_actions for a in recent)
+
+        if not all_work:
+            return None
+
+        # Pattern 1: tap/type loop on same element
+        tap_type_loop = False
+        if len(recent) >= 4:
+            last4 = recent[-4:]
+            types4 = [a.get("action") for a in last4]
+            elems4 = [a.get("element_id") for a in last4]
+            if types4 == ["tap", "type", "tap", "type"]:
+                unique_elems = set(e for e in elems4 if e is not None)
+                if len(unique_elems) <= 1:
+                    tap_type_loop = True
+
+        # Pattern 2: same element tapped 3+ times in recent history
+        element_ids = [a.get("element_id") for a in recent if a.get("element_id") is not None]
+        same_element_spam = False
+        if element_ids:
+            from collections import Counter
+            counts = Counter(element_ids)
+            _, top_count = counts.most_common(1)[0]
+            if top_count >= 3:
+                same_element_spam = True
+
+        # Pattern 3: 8+ work actions without step_done = aimless
+        aimless = len(recent) >= 8
+
+        is_stuck = tap_type_loop or same_element_spam or aimless
+
+        if not is_stuck:
+            return None
+
+        # Determine recovery action based on what's already in FULL history
+        all_types = [a.get("action") for a in action_history]
+        back_count = all_types.count("back")
+        home_count = all_types.count("home")
+        open_app_count = all_types.count("open_app")
+
+        if back_count == 0:
+            logger.warning("[ORCH] STUCK on '%s' (pattern: %s), pressing BACK",
+                           current_step[:40],
+                           "tap/type loop" if tap_type_loop else "same element" if same_element_spam else "aimless")
+            return {
+                "action": {"action": "back", "status": "Resetting — seemed stuck"},
+                "status_text": "Resetting — seemed stuck",
+                "glow_state": GlowState.WORKING.value,
+                "step_complete": False,
+                "task_complete": False,
+            }
+        elif home_count == 0:
+            logger.warning("[ORCH] STUCK after back, going HOME")
+            return {
+                "action": {"action": "home", "status": "Going home to restart"},
+                "status_text": "Going home to restart",
+                "glow_state": GlowState.WORKING.value,
+                "step_complete": False,
+                "task_complete": False,
+            }
+        elif expected_package and open_app_count <= 1:
+            logger.warning("[ORCH] STUCK after home, reopening %s", expected_package)
+            return {
+                "action": {"action": "open_app", "package": expected_package, "status": "Restarting from app home"},
+                "status_text": "Restarting from app home",
+                "glow_state": GlowState.WORKING.value,
+                "step_complete": False,
+                "task_complete": False,
+            }
+        else:
+            logger.warning("[ORCH] STUCK — recovery exhausted, SKIPPING step '%s'", current_step[:40])
+            return {
+                "action": {"action": "step_done", "status": "Skipping stuck step"},
+                "status_text": "Skipping stuck step",
+                "glow_state": GlowState.WORKING.value,
+                "step_complete": True,
+                "task_complete": False,
+            }
 
     def _validate_plan_result(self, plan_result: Dict[str, Any]) -> List[Dict[str, Any]]:
         raw_steps = plan_result.get("plan")
@@ -452,6 +650,42 @@ def _build_verify_response(
 def _normalize_confirmation(response: str) -> str:
     normalized = "".join(ch for ch in response.lower().strip() if ch.isalpha() or ch.isspace())
     token = " ".join(normalized.split())
-    if token in {"yes", "no", "stop", "cancel", "repeat"}:
-        return token
-    return "no"
+    if not token:
+        return "yes"  # empty response = continue, don't cancel
+    if token in {"no", "stop", "cancel"}:
+        return "no"
+    if token in {"yes", "yeah", "yep", "sure", "ok", "okay", "continue", "go"}:
+        return "yes"
+    if token == "repeat":
+        return "repeat"
+    return "yes"  # unknown text = continue
+
+
+# Build a reverse lookup: package → app label
+_PACKAGE_TO_LABEL = {}
+for _label, _pkg in _APP_ALIASES.items():
+    if _pkg not in _PACKAGE_TO_LABEL:
+        _PACKAGE_TO_LABEL[_pkg] = _label
+
+
+_KEYWORD_TO_PACKAGE = {
+    "photo": "com.sec.android.app.camera",
+    "picture": "com.sec.android.app.camera",
+    "selfie": "com.sec.android.app.camera",
+    "shutter": "com.sec.android.app.camera",
+}
+
+
+def _resolve_expected_package(current_step: str, user_intent: str) -> Optional[str]:
+    """Try to figure out which app package the current step should be in."""
+    step_lower = current_step.lower()
+    intent_lower = user_intent.lower()
+    # Explicit app name matches first
+    for label, package in _APP_ALIASES.items():
+        if label in step_lower or label in intent_lower:
+            return package
+    # Keyword-based inference
+    for keyword, package in _KEYWORD_TO_PACKAGE.items():
+        if keyword in step_lower or keyword in intent_lower:
+            return package
+    return None

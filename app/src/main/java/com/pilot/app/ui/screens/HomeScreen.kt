@@ -20,15 +20,21 @@ import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
+import androidx.compose.foundation.text.KeyboardActions
+import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.ArrowUpward
 import androidx.compose.material.icons.filled.Mic
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material3.Icon
@@ -257,37 +263,80 @@ fun HomeScreen(onNavigateToSettings: () -> Unit) {
                     animationSpec = spring(dampingRatio = 0.7f, stiffness = 250f)
                 )
             ) {
-                Box(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .height(56.dp)
-                        .clip(RoundedCornerShape(16.dp))
-                        .border(
-                            width = if (isFocused) 2.dp else 1.5.dp,
-                            color = Primary.copy(alpha = borderAlpha),
-                            shape = RoundedCornerShape(16.dp)
-                        )
-                        .background(CardSurface.copy(alpha = if (isFocused) 0.9f else 0.6f))
-                        .padding(horizontal = 20.dp),
-                    contentAlignment = Alignment.CenterStart
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically
                 ) {
-                    if (textInput.isEmpty()) {
-                        Text(
-                            text = "Type a command...",
-                            style = MaterialTheme.typography.bodyLarge,
-                            color = TextSecondary
+                    Box(
+                        modifier = Modifier
+                            .weight(1f)
+                            .height(56.dp)
+                            .clip(RoundedCornerShape(16.dp))
+                            .border(
+                                width = if (isFocused) 2.dp else 1.5.dp,
+                                color = Primary.copy(alpha = borderAlpha),
+                                shape = RoundedCornerShape(16.dp)
+                            )
+                            .background(CardSurface.copy(alpha = if (isFocused) 0.9f else 0.6f))
+                            .padding(horizontal = 20.dp),
+                        contentAlignment = Alignment.CenterStart
+                    ) {
+                        if (textInput.isEmpty()) {
+                            Text(
+                                text = "Type a command...",
+                                style = MaterialTheme.typography.bodyLarge,
+                                color = TextSecondary
+                            )
+                        }
+                        BasicTextField(
+                            value = textInput,
+                            onValueChange = { textInput = it },
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .onFocusChanged { isFocused = it.isFocused },
+                            textStyle = TextStyle(fontSize = 16.sp, color = TextPrimary),
+                            singleLine = true,
+                            cursorBrush = SolidColor(Primary),
+                            keyboardOptions = KeyboardOptions(imeAction = ImeAction.Send),
+                            keyboardActions = KeyboardActions(
+                                onSend = {
+                                    if (textInput.isNotBlank()) {
+                                        OverlayService.instance?.agentLoop?.onVoiceResult(textInput)
+                                        textInput = ""
+                                    }
+                                }
+                            )
                         )
                     }
-                    BasicTextField(
-                        value = textInput,
-                        onValueChange = { textInput = it },
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .onFocusChanged { isFocused = it.isFocused },
-                        textStyle = TextStyle(fontSize = 16.sp, color = TextPrimary),
-                        singleLine = true,
-                        cursorBrush = SolidColor(Primary)
-                    )
+                    if (textInput.isNotBlank()) {
+                        Spacer(modifier = Modifier.width(12.dp))
+                        Box(
+                            modifier = Modifier
+                                .size(48.dp)
+                                .clip(RoundedCornerShape(14.dp))
+                                .background(
+                                    Brush.linearGradient(
+                                        colors = listOf(Primary, Accent)
+                                    )
+                                )
+                                .pointerInput(Unit) {
+                                    detectTapGestures(
+                                        onTap = {
+                                            OverlayService.instance?.agentLoop?.onVoiceResult(textInput)
+                                            textInput = ""
+                                        }
+                                    )
+                                },
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.ArrowUpward,
+                                contentDescription = "Send",
+                                tint = Color.White,
+                                modifier = Modifier.size(24.dp)
+                            )
+                        }
+                    }
                 }
             }
 
@@ -341,17 +390,12 @@ fun HomeScreen(onNavigateToSettings: () -> Unit) {
                                         micPressed = true
                                         tryAwaitRelease()
                                         micPressed = false
-                                        if (textInput.isNotBlank()) {
-                                            OverlayService.instance?.agentLoop?.onVoiceResult(textInput)
-                                            textInput = ""
-                                        } else {
-                                            val overlay = OverlayService.instance
-                                            if (overlay != null) {
-                                                overlay.speechHelper.onResult = { transcription ->
-                                                    overlay.agentLoop.onVoiceResult(transcription)
-                                                }
-                                                overlay.speechHelper.startListening()
+                                        val overlay = OverlayService.instance
+                                        if (overlay != null) {
+                                            overlay.speechHelper.onResult = { transcription ->
+                                                overlay.agentLoop.onVoiceResult(transcription)
                                             }
+                                            overlay.speechHelper.startListening()
                                         }
                                     }
                                 )

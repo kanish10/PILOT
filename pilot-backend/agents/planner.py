@@ -24,6 +24,22 @@ RULES:
 - Include what info is needed (addresses, names, items, quantities)
 - The last step MUST be a verification/confirmation step
 - If the task requires user confirmation before payment, include that step
+- Keep plans SIMPLE. Fewer steps = fewer chances to get lost.
+
+APP-SPECIFIC RULES (follow these exactly):
+- YouTube/music: EXACTLY these steps, no more:
+  1. Open YouTube app (app: "YouTube", needs: null)
+  2. Tap the search icon to open search (app: "YouTube", needs: null)
+  3. Type the search query and search (app: "YouTube", needs: "the exact song/video name from user request")
+  4. Tap the first video result to play it (app: "YouTube", needs: null)
+  5. Verify the video is playing (app: "YouTube", needs: null)
+  That's 5 steps. The "needs" for step 3 MUST contain the exact song/video name the user asked for.
+- Spotify: Open Spotify → Search for the song → Tap the song to play → Verify playing.
+- Uber: Pickup location is auto-set from GPS — do NOT make a separate "set pickup" step.
+  Plan: Open Uber → Enter destination → Confirm pickup area → Choose ride type (UberX) → Confirm booking → Verify.
+- Camera: Open camera → Tap the shutter button to take photo → Verify photo taken. That's 3 steps.
+- DoorDash/food: Open app → Search restaurant → Select item and add to cart → Checkout → Verify.
+- Messages/SMS: Open Messages → Tap compose or select contact → Type message → Send → Verify.
 
 RESPOND WITH VALID JSON ONLY — no prose, no markdown fences:
 {

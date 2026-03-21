@@ -26,6 +26,7 @@ data class AgentStepRequest(
     @SerialName("task_id") val taskId: String,
     @SerialName("user_intent") val userIntent: String,
     @SerialName("current_step") val currentStep: String,
+    @SerialName("step_needs") val stepNeeds: String? = null,
     @SerialName("ui_tree") val uiTree: ScreenState,
     @SerialName("screenshot_b64") val screenshotB64: String? = null,
     @SerialName("action_history") val actionHistory: List<ActionRecord> = emptyList()

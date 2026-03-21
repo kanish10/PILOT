@@ -132,11 +132,12 @@ class AgentLoopController(private val service: OverlayService) {
                     "Sending screen package=${screenState.packageName} elements=${screenState.elements.size} screenshot=${screenshotB64 != null}"
                 )
 
-                val recentHistory = taskState.actionHistory.takeLast(5)
+                val recentHistory = taskState.actionHistory.takeLast(10)
                 val stepResult = apiClient.agentStep(
                     taskId = taskState.taskId,
                     userIntent = taskState.userIntent,
                     currentStep = currentStep.objective,
+                    stepNeeds = currentStep.needs,
                     uiTree = screenState,
                     screenshotB64 = screenshotB64,
                     actionHistory = recentHistory

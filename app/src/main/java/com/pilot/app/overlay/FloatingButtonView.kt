@@ -19,6 +19,7 @@ class FloatingButtonView(context: Context) : FrameLayout(context) {
     }
 
     var onTapListener: (() -> Unit)? = null
+    var onLongPressListener: (() -> Unit)? = null
 
     private val density = context.resources.displayMetrics.density
     private val buttonSizePx = (BUTTON_SIZE_DP * density).toInt()
@@ -31,8 +32,17 @@ class FloatingButtonView(context: Context) : FrameLayout(context) {
     private var initialTouchX = 0f
     private var initialTouchY = 0f
     private var isDragging = false
+    private var longPressTriggered = false
     private var windowParams: WindowManager.LayoutParams? = null
     private var windowManager: WindowManager? = null
+
+    private val longPressRunnable = Runnable {
+        if (!isDragging) {
+            longPressTriggered = true
+            performHapticFeedback(android.view.HapticFeedbackConstants.LONG_PRESS)
+            onLongPressListener?.invoke()
+        }
+    }
 
     private val background = GradientDrawable().apply {
         shape = GradientDrawable.OVAL
@@ -82,6 +92,8 @@ class FloatingButtonView(context: Context) : FrameLayout(context) {
                 initialTouchX = event.rawX
                 initialTouchY = event.rawY
                 isDragging = false
+                longPressTriggered = false
+                handler.postDelayed(longPressRunnable, 600)
                 return true
             }
             MotionEvent.ACTION_MOVE -> {
@@ -89,6 +101,7 @@ class FloatingButtonView(context: Context) : FrameLayout(context) {
                 val dy = event.rawY - initialTouchY
                 if (dx * dx + dy * dy > 25 * density * density) {
                     isDragging = true
+                    handler.removeCallbacks(longPressRunnable)
                 }
                 if (isDragging) {
                     params.x = initialX + dx.toInt()
@@ -98,7 +111,8 @@ class FloatingButtonView(context: Context) : FrameLayout(context) {
                 return true
             }
             MotionEvent.ACTION_UP -> {
-                if (!isDragging) {
+                handler.removeCallbacks(longPressRunnable)
+                if (!isDragging && !longPressTriggered) {
                     onTapListener?.invoke()
                 }
                 return true

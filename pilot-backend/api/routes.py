@@ -52,9 +52,19 @@ async def task_start(req: TaskStartRequest) -> TaskStartResponse:
     logger.info("POST /task/start  intent='%s'", req.transcription)
     logger.info("=" * 70)
 
+    if not req.transcription or not req.transcription.strip():
+        raise HTTPException(status_code=400, detail="Empty transcription")
+
+    transcription = req.transcription.strip()
+    # Reject garbage transcriptions (voice noise like "23", "the", single chars)
+    if len(transcription) < 3:
+        raise HTTPException(status_code=400, detail="Transcription too short")
+    if transcription.isdigit():
+        raise HTTPException(status_code=400, detail="Transcription appears to be noise")
+
     orch = container.orchestrator
     try:
-        task = await orch.start_task(req.transcription)
+        task = await orch.start_task(req.transcription.strip())
     except Exception as exc:
         logger.error("TASK START FAILED: %s", exc)
         logger.error(traceback.format_exc())
@@ -251,6 +261,7 @@ async def agent_step(req: AgentStepRequest) -> AgentStepResponse:
         result = await orch.agent_step(
             user_intent=req.user_intent,
             current_step=req.current_step,
+            step_needs=req.step_needs,
             ui_tree=req.ui_tree,
             action_history=req.action_history,
             screenshot_b64=req.screenshot_b64,

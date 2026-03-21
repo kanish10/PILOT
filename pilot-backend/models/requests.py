@@ -89,6 +89,7 @@ class AgentStepRequest(BaseModel):
     task_id: str
     user_intent: str
     current_step: str
+    step_needs: Optional[str] = None
     ui_tree: Dict[str, Any]
     screenshot_b64: Optional[str] = None
     action_history: List[Dict[str, Any]] = Field(default_factory=list)

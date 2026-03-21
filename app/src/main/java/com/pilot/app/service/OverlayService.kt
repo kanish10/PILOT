@@ -157,6 +157,7 @@ class OverlayService : Service() {
         }
         fab!!.setWindowParams(params, windowManager)
         fab!!.onTapListener = { onFabTapped() }
+        fab!!.onLongPressListener = { onFabLongPressed() }
         windowManager.addView(fab, params)
     }
 
@@ -193,6 +194,14 @@ class OverlayService : Service() {
         }
     }
 
+    private fun onFabLongPressed() {
+        Log.i(TAG, "FAB long-pressed — cancelling task")
+        agentLoop.cancelCurrentTask()
+        setGlowState(GlowState.IDLE)
+        updateStatusText("Task cancelled.")
+        speak("Task cancelled.")
+    }
+
     // ── Public API for AgentLoopController ──────────────────────────
 
     fun setGlowState(state: GlowState) {
@@ -221,6 +230,13 @@ class OverlayService : Service() {
             fab?.setListeningState(false)
             speechHelper.stopListening()
         }
+    }
+
+    override fun onTaskRemoved(rootIntent: Intent?) {
+        Log.i(TAG, "App removed from recents — cancelling task and stopping service")
+        agentLoop.cancelCurrentTask()
+        stopSelf()
+        super.onTaskRemoved(rootIntent)
     }
 
     override fun onDestroy() {

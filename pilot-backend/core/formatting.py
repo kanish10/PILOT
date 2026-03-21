@@ -11,8 +11,11 @@ def format_ui_tree(ui_tree: Dict[str, Any]) -> str:
     human-readable string for LLM prompts.
 
     Each line looks like:
-      [3] Button: "Confirm UberX" [clickable]
-      [5] EditText: hint:"Where to?" [clickable, editable]
+      [3] Button: "Confirm UberX" @(540,1200) [clickable]
+      [5] EditText: hint:"Where to?" @(540,400) [clickable, editable]
+
+    The @(x,y) is the center of the element — helps LLM understand
+    spatial layout (top vs bottom, left vs right).
     """
     lines: List[str] = []
 
@@ -28,6 +31,12 @@ def format_ui_tree(ui_tree: Dict[str, Any]) -> str:
     if not elements:
         lines.append("(No UI elements found on screen)")
         return "\n".join(lines)
+
+    # On complex screens (>30 elements), filter to useful ones to reduce LLM noise
+    if len(elements) > 30:
+        filtered = [el for el in elements if _is_useful_element(el)]
+        if len(filtered) >= 5:  # sanity check: keep some elements
+            elements = filtered
 
     for el in elements:
         el_id = el.get("id", "?")
@@ -52,6 +61,14 @@ def format_ui_tree(ui_tree: Dict[str, Any]) -> str:
 
         label = " ".join(label_parts) if label_parts else "(no label)"
 
+        # Position — center of bounds [left, top, right, bottom]
+        bounds = el.get("bounds")
+        pos_str = ""
+        if bounds and len(bounds) == 4:
+            cx = (bounds[0] + bounds[2]) // 2
+            cy = (bounds[1] + bounds[3]) // 2
+            pos_str = f" @({cx},{cy})"
+
         # Build flags
         flags: List[str] = []
         if el.get("clickable"):
@@ -64,9 +81,21 @@ def format_ui_tree(ui_tree: Dict[str, Any]) -> str:
             flags.append("checked")
 
         flags_str = f" [{', '.join(flags)}]" if flags else ""
-        lines.append(f"[{el_id}] {class_name}: {label}{flags_str}")
+        lines.append(f"[{el_id}] {class_name}: {label}{pos_str}{flags_str}")
 
     return "\n".join(lines)
+
+
+def _is_useful_element(el: Dict[str, Any]) -> bool:
+    """Element is worth showing to LLM: interactive or has meaningful text."""
+    if el.get("clickable") or el.get("editable") or el.get("scrollable"):
+        return True
+    text = str(el.get("text") or "").strip()
+    hint = str(el.get("hint") or "").strip()
+    desc = str(el.get("content_desc") or "").strip()
+    if text or hint or desc:
+        return True
+    return False
 
 
 def format_action_history(history: List[Dict[str, Any]]) -> str:
