@@ -18,15 +18,15 @@ class GlowBorderView(context: Context) : View(context) {
         private const val BORDER_WIDTH_DP = 10f
         private const val CORNER_RADIUS_DP = 24f
 
-        private const val COLOR_BLUE = 0xFF00CEFF.toInt()
-        private const val COLOR_PURPLE = 0xFF6C5CE7.toInt()
-        private const val COLOR_GREEN = 0xFF00E676.toInt()
-        private const val COLOR_ORANGE = 0xFFFF6D00.toInt()
+        private const val COLOR_BLUE = 0xFF00D9FF.toInt()
+        private const val COLOR_PURPLE = 0xFF7C5CFC.toInt()
+        private const val COLOR_GREEN = 0xFF00E5A0.toInt()
+        private const val COLOR_ORANGE = 0xFFFF5A5A.toInt()
 
-        private const val COLOR_BLUE_LIGHT = 0xFF80E7FF.toInt()
-        private const val COLOR_PURPLE_LIGHT = 0xFFA29BFE.toInt()
-        private const val COLOR_GREEN_LIGHT = 0xFF69F0AE.toInt()
-        private const val COLOR_ORANGE_LIGHT = 0xFFFFAB40.toInt()
+        private const val COLOR_BLUE_LIGHT = 0xFF6EE7FF.toInt()
+        private const val COLOR_PURPLE_LIGHT = 0xFF9B82FF.toInt()
+        private const val COLOR_GREEN_LIGHT = 0xFF5CFFC4.toInt()
+        private const val COLOR_ORANGE_LIGHT = 0xFFFF8F8F.toInt()
     }
 
     private val density = context.resources.displayMetrics.density
