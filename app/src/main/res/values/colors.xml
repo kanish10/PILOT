@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <color name="pilot_blue">#00CEFF</color>
+    <color name="pilot_purple">#6C5CE7</color>
+    <color name="pilot_green">#00E676</color>
+    <color name="pilot_orange">#FF6D00</color>
+    <color name="pilot_dark">#1A1A2E</color>
+    <color name="pilot_surface">#16213E</color>
+    <color name="pilot_white">#FFFFFF</color>
+</resources>
