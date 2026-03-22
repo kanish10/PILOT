@@ -35,9 +35,21 @@ APP-SPECIFIC RULES (follow these exactly):
   That's 4 steps. The "needs" for step 2 MUST contain the exact song/video name the user asked for.
   Do NOT split search into separate "tap search icon" and "type query" steps — combine them into one.
 - Spotify: Open Spotify → Search for the song → Tap the song to play → Verify playing.
+- Google Maps/navigation: EXACTLY these steps:
+  1. Open Google Maps (app: "Google Maps", needs: null)
+  2. Search for the destination (app: "Google Maps", needs: "the exact destination from user request")
+  3. Get directions to the destination (app: "Google Maps", needs: null)
+  4. Verify the route is showing (app: "Google Maps", needs: null)
+  That's 4 steps. The "needs" for step 2 MUST contain the destination.
 - Uber: Pickup location is auto-set from GPS — do NOT make a separate "set pickup" step.
   Plan: Open Uber → Enter destination → Confirm pickup area → Choose ride type (UberX) → Confirm booking → Verify.
-- Camera: Open camera → Tap the shutter button to take photo → Verify photo taken. That's 3 steps.
+- Camera (regular photo): Open camera → Tap the shutter button to take photo → Verify photo taken. That's 3 steps.
+- Camera (selfie): If the user says "selfie" or "front camera":
+  1. Open camera (app: "Camera", needs: null)
+  2. Switch to front camera (app: "Camera", needs: null)
+  3. Tap the shutter button to take photo (app: "Camera", needs: null)
+  4. Verify photo taken (app: "Camera", needs: null)
+  That's 4 steps. ALWAYS include the "Switch to front camera" step for selfies.
 - DoorDash/food: Open app → Search restaurant → Select item and add to cart → Checkout → Verify.
 - Messages/SMS: Open Messages → Tap compose or select contact → Type message → Send → Verify.
 

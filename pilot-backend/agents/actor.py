@@ -104,8 +104,12 @@ APP-SPECIFIC KNOWLEDGE:
   After selecting UberX, tap "Choose UberX" / "Confirm" button.
 - Camera: Shutter button is a large round button at bottom center (@~540,1800+).
   If you see the camera viewfinder, tap the shutter to take the photo.
+  To switch to front/selfie camera, tap the "Switch camera" or "flip" button (usually top-right).
+  For selfies: switch camera FIRST, then tap shutter.
 - DoorDash: Search bar at top. After typing, tap first matching restaurant result.
 - Spotify: Search icon at bottom nav. Tap it, then tap search field, type song name.
+- Google Maps: Search bar says "Search here" at the top. Tap it, then type the location.
+  After typing, tap the first matching search result. To get directions, tap the "Directions" button.
 - Most apps: Search/input fields are near the top of the screen (low y values).\
 """
 
@@ -223,6 +227,14 @@ class ActorAgent:
             if yt_action is not None:
                 return yt_action
 
+        # ── Google Maps: full deterministic handling ──────────────────────
+        if current_package == "com.google.android.apps.maps":
+            maps_action = self._maps_fast_path(
+                objective_norm, elements, action_history, payload_text
+            )
+            if maps_action is not None:
+                return maps_action
+
         # Loading screen → wait
         if self._is_loading_screen(elements):
             return {"action": "wait", "seconds": 2, "status": "Waiting for screen update"}
@@ -236,9 +248,38 @@ class ActorAgent:
         if open_app_action is not None:
             return open_app_action
 
-        # Camera: shutter button detection
+        # Camera: deterministic handling
         if current_package == "com.sec.android.app.camera":
+            # ── Switch to front camera (selfie) ──────────────────────
+            if any(k in objective_norm for k in ("front camera", "switch camera", "flip camera", "selfie", "switch to front")):
+                # Already tapped the switch button? Step done
+                if any(a.get("action") == "tap" for a in action_history[-3:]):
+                    return {"action": "step_done", "status": "Camera switched"}
+                flip_btn = _find_element_by_text(elements, [
+                    "switch camera", "flip camera", "front camera",
+                    "camera switch", "toggle camera",
+                ])
+                if flip_btn:
+                    return {"action": "tap", "element_id": flip_btn["id"],
+                            "status": "Switching to front camera"}
+                # Fallback: look for a camera-switch button by resource_id or position
+                for el in elements:
+                    if not el.get("clickable"):
+                        continue
+                    rid = str(el.get("resource_id") or "").lower()
+                    desc = str(el.get("content_desc") or "").lower()
+                    if any(k in rid for k in ("switch", "flip", "facing", "toggle")) or \
+                       any(k in desc for k in ("switch", "flip", "facing", "toggle")):
+                        return {"action": "tap", "element_id": el["id"],
+                                "status": "Switching to front camera"}
+                # If nothing found, mark done (might already be front camera)
+                return {"action": "step_done", "status": "Front camera ready"}
+
+            # ── Take photo (shutter button) ──────────────────────────
             if any(k in objective_norm for k in ("shutter", "take photo", "take picture", "capture", "take a photo", "take a picture")):
+                # Already tapped the shutter? Photo is taken — move on
+                if any(a.get("action") == "tap" for a in action_history[-3:]):
+                    return {"action": "step_done", "status": "Photo taken"}
                 el = _find_element_by_text(elements, ["shutter", "capture"])
                 if el:
                     return {"action": "tap", "element_id": el["id"], "status": "Taking photo"}
@@ -565,6 +606,105 @@ class ActorAgent:
         # Didn't match — fall through to LLM
         return None
 
+    def _maps_fast_path(
+        self,
+        objective_norm: str,
+        elements: List[Dict[str, Any]],
+        action_history: List[Dict[str, Any]],
+        payload_text: str,
+    ) -> Optional[Dict[str, Any]]:
+        """
+        Deterministic handling for Google Maps screens.
+        Steps: open → search location → get directions → verify route.
+        """
+        has_editable = any(el.get("editable") for el in elements)
+
+        # ── Step: "Search for X" ────────────────────────────────────
+        if any(k in objective_norm for k in ("search for", "search", "find", "look up", "type")):
+            # Already typed?
+            already_typed = any(
+                a.get("action") == "type" and a.get("value") == payload_text
+                for a in action_history[-6:]
+            ) if payload_text else False
+
+            if already_typed:
+                # Check if we already tapped a result after typing
+                already_tapped_after_type = False
+                found_type = False
+                for a in reversed(action_history[-6:]):
+                    if a.get("action") == "type":
+                        found_type = True
+                    elif found_type and a.get("action") == "tap":
+                        already_tapped_after_type = True
+                        break
+                if already_tapped_after_type:
+                    return {"action": "step_done", "status": "Location selected"}
+
+                # Find a search result to tap (clickable, not editable, has text)
+                result = _find_maps_search_result(elements, payload_text)
+                if result:
+                    return {"action": "tap", "element_id": result["id"],
+                            "status": "Selecting search result"}
+                # Still loading?
+                if self._is_loading_screen(elements):
+                    return {"action": "wait", "seconds": 2, "status": "Waiting for results"}
+                return {"action": "step_done", "status": "Search submitted"}
+
+            # Has editable field → type the query
+            if has_editable and payload_text:
+                return self._maybe_type(payload_text, elements, action_history)
+
+            # No editable field → tap the Maps search bar
+            search_bar = _find_element_by_text(elements, [
+                "search here", "search_omni_box", "search along route",
+            ])
+            if search_bar:
+                return {"action": "tap", "element_id": search_bar["id"],
+                        "status": "Opening Maps search"}
+            # Fallback: look for any element with "search" that's NOT a bottom nav icon
+            for el in elements:
+                if not el.get("clickable"):
+                    continue
+                text = " ".join([
+                    str(el.get("text") or ""),
+                    str(el.get("hint") or ""),
+                    str(el.get("content_desc") or ""),
+                    str(el.get("resource_id") or ""),
+                ]).lower()
+                bounds = el.get("bounds")
+                # Maps search bar is at the top of the screen (y < 400)
+                if "search" in text and bounds and len(bounds) == 4:
+                    cy = (bounds[1] + bounds[3]) // 2
+                    if cy < 400:
+                        return {"action": "tap", "element_id": el["id"],
+                                "status": "Opening Maps search"}
+
+        # ── Step: "Get directions" / "Navigate" ─────────────────────
+        if any(k in objective_norm for k in ("direction", "navigate", "route", "start nav")):
+            directions_btn = _find_element_by_text(elements, [
+                "directions", "navigate", "start",
+            ])
+            if directions_btn:
+                return {"action": "tap", "element_id": directions_btn["id"],
+                        "status": "Getting directions"}
+            # If we see a route overview, step is done
+            route_indicator = _find_element_by_text(elements, [
+                "min", "fastest route", "start navigation",
+            ])
+            if route_indicator:
+                return {"action": "step_done", "status": "Directions loaded"}
+
+        # ── Step: "Verify route" ────────────────────────────────────
+        if any(k in objective_norm for k in ("verify", "confirm", "check")):
+            route = _find_element_by_text(elements, [
+                "min", "route", "directions", "start", "navigation",
+            ])
+            if route:
+                return {"action": "step_done", "status": "Route is showing"}
+            return {"action": "wait", "seconds": 2, "status": "Waiting for route"}
+
+        return None
+
     def _maybe_tap_search_trigger(
         self,
         elements: List[Dict[str, Any]],
@@ -590,6 +730,12 @@ class ActorAgent:
             el = _find_element_by_text(elements, ["search"])
             if el:
                 return {"action": "tap", "element_id": el["id"], "status": "Opening search"}
+
+        # Google Maps: search bar
+        if current_package == "com.google.android.apps.maps":
+            el = _find_element_by_text(elements, ["search here", "search_omni_box"])
+            if el:
+                return {"action": "tap", "element_id": el["id"], "status": "Opening Maps search"}
 
         # Spotify: search tab
         if current_package == "com.spotify.music":
@@ -835,6 +981,58 @@ def _find_youtube_video_result(elements: List[Dict[str, Any]]) -> Optional[Dict[
         # Return the first (topmost) video result
         candidates.sort(key=lambda x: x[1])
         return candidates[0][0]
+    return None
+
+
+def _find_maps_search_result(
+    elements: List[Dict[str, Any]], query: str
+) -> Optional[Dict[str, Any]]:
+    """Find a search result in Google Maps matching the query."""
+    query_lower = query.lower()
+    query_words = [w for w in query_lower.split() if len(w) > 2]
+
+    candidates = []
+    for el in elements:
+        if not el.get("clickable"):
+            continue
+        if el.get("editable"):
+            continue
+        text = " ".join([
+            str(el.get("text") or ""),
+            str(el.get("content_desc") or ""),
+        ]).lower()
+        if not text.strip() or len(text.strip()) < 3:
+            continue
+        # Skip nav/UI elements
+        if any(skip in text for skip in [
+            "search", "back", "clear", "voice", "microphone",
+            "explore", "go", "transit", "driving", "walking",
+        ]):
+            continue
+        match_count = sum(1 for w in query_words if w in text)
+        if match_count >= 1:
+            candidates.append((el, match_count))
+
+    if candidates:
+        candidates.sort(key=lambda x: -x[1])
+        return candidates[0][0]
+
+    # Fallback: first clickable non-nav element below y > 200
+    for el in elements:
+        if not el.get("clickable") or el.get("editable"):
+            continue
+        text = " ".join([
+            str(el.get("text") or ""),
+            str(el.get("content_desc") or ""),
+        ]).lower()
+        if any(skip in text for skip in ["search", "back", "clear", "voice", "home"]):
+            continue
+        if text.strip() and len(text.strip()) >= 3:
+            bounds = el.get("bounds")
+            if bounds and len(bounds) == 4:
+                cy = (bounds[1] + bounds[3]) // 2
+                if cy > 200:
+                    return el
     return None
 
 
